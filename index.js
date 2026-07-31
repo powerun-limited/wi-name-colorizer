@@ -1,8 +1,7 @@
 import { getRequestHeaders } from "../../../../script.js";
 
 // ========== KONFIGURATION ==========
-const BOOK_NAME = "Karaktärsnamn";   // Ändra till namnet på din World Info-bok
-const DEFAULT_COLOR = "#b0b0b0";     // Ljusgrått om ingen färg anges
+const DEFAULT_COLOR = "#b0b0b0";   // Ljusgrått om ingen färg anges
 // ===================================
 
 const nameToColor = new Map(); // lowercase name → color
@@ -16,55 +15,95 @@ function extractColor(comment) {
 
 function isPlainKey(key) {
     const k = String(key).trim();
-    // Hoppa över rena regex-nycklar (börjar och slutar med /)
+    // Hoppa över rena regex-nycklar
     return k && !(k.startsWith("/") && k.lastIndexOf("/") > 0);
 }
 
-async function buildFromWorldInfo() {
+async function getActiveBookNames() {
+    try {
+        // Försök hämta listan över valda/globala böcker
+        const response = await fetch("/api/settings/get", {
+            method: "POST",
+            headers: getRequestHeaders(),
+        });
+
+        if (!response.ok) return [];
+
+        const data = await response.json();
+        // selected_world_info finns i de flesta versioner
+        const selected = data?.selected_world_info ?? data?.world_info?.selected ?? [];
+        return Array.isArray(selected) ? selected.filter(Boolean) : [];
+    } catch (err) {
+        console.warn("[WI Name Colorizer] Kunde inte hämta aktiva böcker:", err);
+        return [];
+    }
+}
+
+async function loadBook(name) {
     try {
         const response = await fetch("/api/worldinfo/get", {
             method: "POST",
             headers: getRequestHeaders(),
-            body: JSON.stringify({ name: BOOK_NAME }),
+            body: JSON.stringify({ name }),
         });
 
         if (!response.ok) {
-            console.warn(`[WI Name Colorizer] Kunde inte hämta boken "${BOOK_NAME}"`);
+            console.warn(`[WI Name Colorizer] Kunde inte hämta boken "${name}"`);
+            return null;
+        }
+        return await response.json();
+    } catch (err) {
+        console.error(`[WI Name Colorizer] Fel vid hämtning av "${name}":`, err);
+        return null;
+    }
+}
+
+async function buildFromWorldInfo() {
+    try {
+        const bookNames = await getActiveBookNames();
+
+        if (bookNames.length === 0) {
+            console.log("[WI Name Colorizer] Inga aktiva World Info-böcker hittades.");
+            masterRegex = null;
             return;
         }
 
-        const data = await response.json();
-        const entries = data?.entries ?? {};
+        console.log("[WI Name Colorizer] Aktiva böcker:", bookNames.join(", "));
 
         nameToColor.clear();
         const names = [];
 
-        for (const entry of Object.values(entries)) {
-            if (entry.disable) continue;
+        for (const bookName of bookNames) {
+            const data = await loadBook(bookName);
+            if (!data?.entries) continue;
 
-            const color = extractColor(entry.comment);
-            const allKeys = [...(entry.key ?? []), ...(entry.keysecondary ?? [])];
+            for (const entry of Object.values(data.entries)) {
+                if (entry.disable) continue;
 
-            for (const raw of allKeys) {
-                if (!isPlainKey(raw)) continue;
-                const name = String(raw).trim();
-                if (!name) continue;
+                const color = extractColor(entry.comment);
+                const allKeys = [...(entry.key ?? []), ...(entry.keysecondary ?? [])];
 
-                const lower = name.toLowerCase();
-                if (!nameToColor.has(lower)) {
-                    nameToColor.set(lower, color);
-                    names.push(name);
+                for (const raw of allKeys) {
+                    if (!isPlainKey(raw)) continue;
+                    const name = String(raw).trim();
+                    if (!name) continue;
+
+                    const lower = name.toLowerCase();
+                    if (!nameToColor.has(lower)) {
+                        nameToColor.set(lower, color);
+                        names.push(name);
+                    }
                 }
             }
         }
 
         if (names.length === 0) {
             masterRegex = null;
-            console.log("[WI Name Colorizer] Inga namn hittades.");
+            console.log("[WI Name Colorizer] Inga namn hittades i de aktiva böckerna.");
             return;
         }
 
-        // Längsta namn först så att "The Crown" matchas före "Crown"
+        // Längsta namn först
         names.sort((a, b) => b.length - a.length);
 
         const escaped = names.map(n =>
@@ -76,7 +115,7 @@ async function buildFromWorldInfo() {
             "gi"
         );
 
-        console.log(`[WI Name Colorizer] Byggde regex med ${names.length} namn.`);
+        console.log(`[WI Name Colorizer] Byggde regex med ${names.length} namn från ${bookNames.length} bok(ar).`);
     } catch (err) {
         console.error("[WI Name Colorizer] Fel:", err);
     }
@@ -89,7 +128,7 @@ function getColor(name) {
 function colorizeElement(el) {
     if (!el || !masterRegex) return;
 
-    // Ta bort tidigare färgmarkeringar för att undvika nästlade span
+    // Ta bort tidigare färgmarkeringar
     el.querySelectorAll("span[data-wi-color]").forEach(span => {
         span.replaceWith(...span.childNodes);
     });
@@ -123,7 +162,6 @@ eventSource.on(eventTypes.CHAT_CHANGED, async () => {
     colorizeAllVisible();
 });
 
-// Uppdatera automatiskt när World Info ändras
 eventSource.on(eventTypes.WORLDINFO_UPDATED, async () => {
     await buildFromWorldInfo();
     colorizeAllVisible();
