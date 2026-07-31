@@ -6,16 +6,30 @@ const BOOK_NAMES = [
     "GOTLB"
 ];
 
-const DEFAULT_COLOR = "#b0b0b0"; // Ljusgrått om ingen färg anges
+const DEFAULT_COLOR = "#b0b0b0";
 // ===================================
 
 const nameToColor = new Map();
 let masterRegex = null;
 
-function extractColor(comment) {
-    if (!comment) return DEFAULT_COLOR;
+// ---------- Färglogik (chat) ----------
+
+function extractColorFromComment(comment) {
+    if (!comment) return null;
     const match = String(comment).match(/#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/);
-    return match ? `#${match[1]}` : DEFAULT_COLOR;
+    return match ? `#${match[1]}` : null;
+}
+
+function getEntryColor(entry) {
+    // 1. Först den sparade färgen från färgknappen
+    if (entry.extensions?.wiNameColor) {
+        return entry.extensions.wiNameColor;
+    }
+    // 2. Fallback: hex i Title/Memo
+    const fromComment = extractColorFromComment(entry.comment);
+    if (fromComment) return fromComment;
+    // 3. Standard
+    return DEFAULT_COLOR;
 }
 
 function isPlainKey(key) {
@@ -25,10 +39,8 @@ function isPlainKey(key) {
 
 function extractNamesFromRegexKey(key) {
     const k = String(key).trim();
-    // Försök hitta en alternation-grupp: (Name1|Name2|Name3)
     const match = k.match(/\(([^)]+)\)/);
     if (!match) return [];
-
     return match[1]
         .split("|")
         .map(s => s.trim())
@@ -53,6 +65,18 @@ async function loadBook(name) {
     }
 }
 
+async function saveBook(name, data) {
+    try {
+        await fetch("/api/worldinfo/edit", {
+            method: "POST",
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name, data }),
+        });
+    } catch (err) {
+        console.error(`[WI Name Colorizer] Kunde inte spara boken "${name}":`, err);
+    }
+}
+
 async function buildFromWorldInfo() {
     try {
         nameToColor.clear();
@@ -65,7 +89,7 @@ async function buildFromWorldInfo() {
             for (const entry of Object.values(data.entries)) {
                 if (entry.disable) continue;
 
-                const color = extractColor(entry.comment);
+                const color = getEntryColor(entry);
                 const allKeys = [...(entry.key ?? []), ...(entry.keysecondary ?? [])];
 
                 for (const raw of allKeys) {
@@ -77,7 +101,6 @@ async function buildFromWorldInfo() {
                     if (isPlainKey(key)) {
                         namesToAdd = [key];
                     } else {
-                        // Det är en regex → försök extrahera namnen
                         namesToAdd = extractNamesFromRegexKey(key);
                     }
 
@@ -98,7 +121,6 @@ async function buildFromWorldInfo() {
             return;
         }
 
-        // Längsta namn först
         names.sort((a, b) => b.length - a.length);
 
         const escaped = names.map(n =>
@@ -142,13 +164,116 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
-// ========== Event-lyssnare ==========
+// ---------- Färgknapp i World Info-editorn ----------
+
+function createColorPicker(currentColor, onChange) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "wi-name-color-picker";
+    wrapper.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin-left:8px;";
+
+    const label = document.createElement("span");
+    label.textContent = "Färg:";
+    label.style.cssText = "font-size:12px; opacity:0.8;";
+
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = currentColor || DEFAULT_COLOR;
+    input.title = "Välj färg för detta namn i chatten";
+    input.style.cssText = "width:32px; height:24px; padding:0; border:1px solid #555; cursor:pointer;";
+
+    input.addEventListener("input", () => onChange(input.value));
+    input.addEventListener("change", () => onChange(input.value));
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    return wrapper;
+}
+
+async function handleColorChange(bookName, uid, newColor) {
+    const data = await loadBook(bookName);
+    if (!data?.entries?.[uid]) return;
+
+    if (!data.entries[uid].extensions) {
+        data.entries[uid].extensions = {};
+    }
+    data.entries[uid].extensions.wiNameColor = newColor;
+
+    await saveBook(bookName, data);
+    console.log(`[WI Name Colorizer] Sparade färg ${newColor} på entry ${uid} i ${bookName}`);
+
+    // Bygg om färgerna direkt
+    await buildFromWorldInfo();
+    colorizeAllVisible();
+}
+
+function injectColorPickers() {
+    // Hitta alla entry-formulär som har ett comment-fält
+    const commentFields = document.querySelectorAll(
+        '#world_popup_entries_list textarea[name="comment"], ' +
+        '.world_entry textarea[name="comment"], ' +
+        'textarea.world_entry_form_control[name="comment"]'
+    );
+
+    commentFields.forEach(textarea => {
+        // Undvik att lägga till flera gånger
+        if (textarea.dataset.wiColorInjected) return;
+        textarea.dataset.wiColorInjected = "1";
+
+        // Försök hitta entry-uid och boknamn från närmaste container
+        const entryEl = textarea.closest(".world_entry, [data-uid], .world_entry_form");
+        if (!entryEl) return;
+
+        const uid = entryEl.dataset.uid || entryEl.getAttribute("data-uid") || 
+                    entryEl.querySelector("[data-uid]")?.dataset.uid;
+
+        // Försök hitta vilken bok som är öppen just nu
+        const bookSelect = document.querySelector("#world_editor_select, select[name='world']");
+        const bookName = bookSelect?.value || BOOK_NAMES[0];
+
+        if (!uid || !bookName) return;
+
+        // Hämta nuvarande färg (asynkront)
+        loadBook(bookName).then(data => {
+            const entry = data?.entries?.[uid];
+            const currentColor = entry ? getEntryColor(entry) : DEFAULT_COLOR;
+
+            const picker = createColorPicker(currentColor, (newColor) => {
+                handleColorChange(bookName, uid, newColor);
+            });
+
+            // Placera knappen efter labeln eller bredvid textarea
+            const label = textarea.closest("div, label, .form_group")?.querySelector("label, .world_entry_form_label");
+            if (label) {
+                label.appendChild(picker);
+            } else {
+                textarea.parentElement.insertBefore(picker, textarea.nextSibling);
+            }
+        });
+    });
+}
+
+// MutationObserver för att fånga när nya entries öppnas i editorn
+const wiObserver = new MutationObserver(() => {
+    injectColorPickers();
+});
+
+function startWiObserver() {
+    const target = document.querySelector("#world_popup, #world_editor, #world_info, body");
+    if (target) {
+        wiObserver.observe(target, { childList: true, subtree: true });
+        injectColorPickers(); // Kör en gång direkt
+    }
+}
+
+// ---------- Event-lyssnare ----------
+
 const context = SillyTavern.getContext();
 const { eventSource, eventTypes } = context;
 
 eventSource.on(eventTypes.APP_READY, async () => {
     await buildFromWorldInfo();
     colorizeAllVisible();
+    startWiObserver();
 });
 
 eventSource.on(eventTypes.CHAT_CHANGED, async () => {
@@ -159,10 +284,12 @@ eventSource.on(eventTypes.CHAT_CHANGED, async () => {
 eventSource.on(eventTypes.WORLDINFO_UPDATED, async () => {
     await buildFromWorldInfo();
     colorizeAllVisible();
+    setTimeout(injectColorPickers, 300); // Ge editorn tid att ritas om
 });
 
 eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, onMessageRendered);
 eventSource.on(eventTypes.USER_MESSAGE_RENDERED, onMessageRendered);
 
-// Kör en gång direkt
+// Start
 buildFromWorldInfo().then(colorizeAllVisible);
+startWiObserver();
