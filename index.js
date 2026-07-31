@@ -1,13 +1,12 @@
 import { getRequestHeaders } from "../../../../script.js";
 
 // ========== KONFIGURATION ==========
-// Skriv de exakta namnen på dina två World Info-böcker här:
 const BOOK_NAMES = [
     "MGOT",
     "GOTLB"
 ];
 
-const DEFAULT_COLOR = "#b0b0b0";   // Ljusgrått om ingen färg anges
+const DEFAULT_COLOR = "#b0b0b0"; // Ljusgrått om ingen färg anges
 // ===================================
 
 const nameToColor = new Map();
@@ -34,29 +33,6 @@ function extractNamesFromRegexKey(key) {
         .split("|")
         .map(s => s.trim())
         .filter(s => s && !s.includes("\\") && !s.includes("[") && s.length > 1);
-}
-
-// Inuti buildFromWorldInfo(), byt ut nyckel-loopen mot detta:
-for (const raw of allKeys) {
-    const key = String(raw).trim();
-    if (!key) continue;
-
-    let namesToAdd = [];
-
-    if (isPlainKey(key)) {
-        namesToAdd = [key];
-    } else {
-        // Det är en regex → försök extrahera namnen
-        namesToAdd = extractNamesFromRegexKey(key);
-    }
-
-    for (const name of namesToAdd) {
-        const lower = name.toLowerCase();
-        if (!nameToColor.has(lower)) {
-            nameToColor.set(lower, color);
-            names.push(name);
-        }
-    }
 }
 
 async function loadBook(name) {
@@ -93,14 +69,24 @@ async function buildFromWorldInfo() {
                 const allKeys = [...(entry.key ?? []), ...(entry.keysecondary ?? [])];
 
                 for (const raw of allKeys) {
-                    if (!isPlainKey(raw)) continue;
-                    const name = String(raw).trim();
-                    if (!name) continue;
+                    const key = String(raw).trim();
+                    if (!key) continue;
 
-                    const lower = name.toLowerCase();
-                    if (!nameToColor.has(lower)) {
-                        nameToColor.set(lower, color);
-                        names.push(name);
+                    let namesToAdd = [];
+
+                    if (isPlainKey(key)) {
+                        namesToAdd = [key];
+                    } else {
+                        // Det är en regex → försök extrahera namnen
+                        namesToAdd = extractNamesFromRegexKey(key);
+                    }
+
+                    for (const name of namesToAdd) {
+                        const lower = name.toLowerCase();
+                        if (!nameToColor.has(lower)) {
+                            nameToColor.set(lower, color);
+                            names.push(name);
+                        }
                     }
                 }
             }
@@ -112,6 +98,7 @@ async function buildFromWorldInfo() {
             return;
         }
 
+        // Längsta namn först
         names.sort((a, b) => b.length - a.length);
 
         const escaped = names.map(n =>
@@ -155,6 +142,7 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
+// ========== Event-lyssnare ==========
 const context = SillyTavern.getContext();
 const { eventSource, eventTypes } = context;
 
@@ -176,4 +164,5 @@ eventSource.on(eventTypes.WORLDINFO_UPDATED, async () => {
 eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, onMessageRendered);
 eventSource.on(eventTypes.USER_MESSAGE_RENDERED, onMessageRendered);
 
+// Kör en gång direkt
 buildFromWorldInfo().then(colorizeAllVisible);
