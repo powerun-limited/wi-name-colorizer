@@ -169,19 +169,18 @@ function onMessageRendered(mesId) {
 function createColorPicker(currentColor, onChange) {
     const wrapper = document.createElement("div");
     wrapper.className = "wi-name-color-picker";
-    wrapper.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin-left:8px;";
+    wrapper.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin-left:8px; vertical-align:middle;";
 
     const label = document.createElement("span");
     label.textContent = "Färg:";
-    label.style.cssText = "font-size:12px; opacity:0.8;";
+    label.style.cssText = "font-size:12px; opacity:0.85;";
 
     const input = document.createElement("input");
     input.type = "color";
     input.value = currentColor || DEFAULT_COLOR;
     input.title = "Välj färg för detta namn i chatten";
-    input.style.cssText = "width:32px; height:24px; padding:0; border:1px solid #555; cursor:pointer;";
+    input.style.cssText = "width:28px; height:22px; padding:0; border:1px solid #666; cursor:pointer; background:none;";
 
-    input.addEventListener("input", () => onChange(input.value));
     input.addEventListener("change", () => onChange(input.value));
 
     wrapper.appendChild(label);
@@ -191,7 +190,10 @@ function createColorPicker(currentColor, onChange) {
 
 async function handleColorChange(bookName, uid, newColor) {
     const data = await loadBook(bookName);
-    if (!data?.entries?.[uid]) return;
+    if (!data?.entries?.[uid]) {
+        console.warn("[WI Name Colorizer] Hittade inte entry", uid, "i", bookName);
+        return;
+    }
 
     if (!data.entries[uid].extensions) {
         data.entries[uid].extensions = {};
@@ -199,40 +201,33 @@ async function handleColorChange(bookName, uid, newColor) {
     data.entries[uid].extensions.wiNameColor = newColor;
 
     await saveBook(bookName, data);
-    console.log(`[WI Name Colorizer] Sparade färg ${newColor} på entry ${uid} i ${bookName}`);
+    console.log(`[WI Name Colorizer] Sparade färg ${newColor} på UID ${uid}`);
 
-    // Bygg om färgerna direkt
     await buildFromWorldInfo();
     colorizeAllVisible();
 }
 
 function injectColorPickers() {
-    // Hitta alla entry-formulär som har ett comment-fält
-    const commentFields = document.querySelectorAll(
-        '#world_popup_entries_list textarea[name="comment"], ' +
-        '.world_entry textarea[name="comment"], ' +
-        'textarea.world_entry_form_control[name="comment"]'
-    );
+    // Den mest stabila selektorn just nu
+    const commentFields = document.querySelectorAll(".world_entry textarea[name=\"comment\"]");
 
     commentFields.forEach(textarea => {
-        // Undvik att lägga till flera gånger
         if (textarea.dataset.wiColorInjected) return;
         textarea.dataset.wiColorInjected = "1";
 
-        // Försök hitta entry-uid och boknamn från närmaste container
-        const entryEl = textarea.closest(".world_entry, [data-uid], .world_entry_form");
+        const entryEl = textarea.closest(".world_entry");
         if (!entryEl) return;
 
-        const uid = entryEl.dataset.uid || entryEl.getAttribute("data-uid") || 
-                    entryEl.querySelector("[data-uid]")?.dataset.uid;
+        const uid = entryEl.getAttribute("uid") || entryEl.dataset.uid;
+        if (!uid) return;
 
-        // Försök hitta vilken bok som är öppen just nu
-        const bookSelect = document.querySelector("#world_editor_select, select[name='world']");
+        // Hitta vilken bok som är vald i editorn
+        const bookSelect = document.querySelector("#world_editor_select");
         const bookName = bookSelect?.value || BOOK_NAMES[0];
 
-        if (!uid || !bookName) return;
+        if (!bookName) return;
 
-        // Hämta nuvarande färg (asynkront)
+        // Hämta nuvarande färg och lägg till knappen
         loadBook(bookName).then(data => {
             const entry = data?.entries?.[uid];
             const currentColor = entry ? getEntryColor(entry) : DEFAULT_COLOR;
@@ -241,28 +236,23 @@ function injectColorPickers() {
                 handleColorChange(bookName, uid, newColor);
             });
 
-            // Placera knappen efter labeln eller bredvid textarea
-            const label = textarea.closest("div, label, .form_group")?.querySelector("label, .world_entry_form_label");
-            if (label) {
-                label.appendChild(picker);
-            } else {
-                textarea.parentElement.insertBefore(picker, textarea.nextSibling);
-            }
+            // Placera knappen direkt efter textarea (enklast och mest synligt)
+            textarea.parentNode.insertBefore(picker, textarea.nextSibling);
         });
     });
 }
 
-// MutationObserver för att fånga när nya entries öppnas i editorn
+// Observer + manuell trigger
 const wiObserver = new MutationObserver(() => {
-    injectColorPickers();
+    // Liten fördröjning så att SillyTavern hinner rita klart
+    setTimeout(injectColorPickers, 150);
 });
 
 function startWiObserver() {
-    const target = document.querySelector("#world_popup, #world_editor, #world_info, body");
-    if (target) {
-        wiObserver.observe(target, { childList: true, subtree: true });
-        injectColorPickers(); // Kör en gång direkt
-    }
+    const target = document.body;
+    wiObserver.observe(target, { childList: true, subtree: true });
+    // Kör också direkt
+    setTimeout(injectColorPickers, 500);
 }
 
 // ---------- Event-lyssnare ----------
