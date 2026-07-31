@@ -21,14 +21,11 @@ function extractColorFromComment(comment) {
 }
 
 function getEntryColor(entry) {
-    // 1. Först den sparade färgen från färgknappen
     if (entry.extensions?.wiNameColor) {
         return entry.extensions.wiNameColor;
     }
-    // 2. Fallback: hex i Title/Memo
     const fromComment = extractColorFromComment(entry.comment);
     if (fromComment) return fromComment;
-    // 3. Standard
     return DEFAULT_COLOR;
 }
 
@@ -166,6 +163,47 @@ function onMessageRendered(mesId) {
 
 // ---------- Färgknapp i World Info-editorn ----------
 
+function createColorPicker(currentColor, onChange) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "wi-name-color-picker";
+    wrapper.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin-left:8px; vertical-align:middle;";
+
+    const label = document.createElement("span");
+    label.textContent = "Färg:";
+    label.style.cssText = "font-size:12px; opacity:0.85;";
+
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = currentColor || DEFAULT_COLOR;
+    input.title = "Välj färg för detta namn i chatten";
+    input.style.cssText = "width:28px; height:22px; padding:0; border:1px solid #666; cursor:pointer; background:none;";
+
+    input.addEventListener("change", () => onChange(input.value));
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    return wrapper;
+}
+
+async function handleColorChange(bookName, uid, newColor) {
+    const data = await loadBook(bookName);
+    if (!data?.entries?.[uid]) {
+        console.warn("[WI Name Colorizer] Hittade inte entry", uid, "i", bookName);
+        return;
+    }
+
+    if (!data.entries[uid].extensions) {
+        data.entries[uid].extensions = {};
+    }
+    data.entries[uid].extensions.wiNameColor = newColor;
+
+    await saveBook(bookName, data);
+    console.log(`[WI Name Colorizer] Sparade färg ${newColor} på UID ${uid}`);
+
+    await buildFromWorldInfo();
+    colorizeAllVisible();
+}
+
 function injectColorPickers() {
     const commentFields = document.querySelectorAll('.world_entry textarea[name="comment"]');
     console.log(`[WI Name Colorizer] Hittade ${commentFields.length} comment-fält`);
@@ -175,28 +213,26 @@ function injectColorPickers() {
     commentFields.forEach(textarea => {
         if (textarea.dataset.wiColorInjected) return;
 
-        const entryEl = textarea.closest('.world_entry');
+        const entryEl = textarea.closest(".world_entry");
         if (!entryEl) return;
 
-        const uid = entryEl.getAttribute('uid') || entryEl.dataset.uid;
+        const uid = entryEl.getAttribute("uid") || entryEl.dataset.uid;
         if (!uid) return;
 
-        const bookSelect = document.querySelector('#world_editor_select');
+        const bookSelect = document.querySelector("#world_editor_select");
         const bookName = bookSelect?.value || BOOK_NAMES[0];
         if (!bookName) return;
 
         textarea.dataset.wiColorInjected = "1";
         injected++;
 
-        // Skapa knappen direkt (utan att vänta på loadBook först)
         const picker = createColorPicker(DEFAULT_COLOR, async (newColor) => {
             await handleColorChange(bookName, uid, newColor);
         });
 
-        // Lägg knappen precis efter textarea
         textarea.parentNode.insertBefore(picker, textarea.nextSibling);
 
-        // Uppdatera färgen i efterhand (snyggare)
+        // Uppdatera färgen i efterhand
         loadBook(bookName).then(data => {
             const entry = data?.entries?.[uid];
             if (entry) {
@@ -213,13 +249,11 @@ function injectColorPickers() {
 }
 
 function startWiObserver() {
-    // Kör flera gånger med fördröjning (SillyTavern ritar entries asynkront)
     setTimeout(injectColorPickers, 300);
     setTimeout(injectColorPickers, 800);
     setTimeout(injectColorPickers, 1500);
     setTimeout(injectColorPickers, 3000);
 
-    // Observer för framtida ändringar
     const observer = new MutationObserver(() => {
         setTimeout(injectColorPickers, 200);
     });
@@ -245,7 +279,7 @@ eventSource.on(eventTypes.CHAT_CHANGED, async () => {
 eventSource.on(eventTypes.WORLDINFO_UPDATED, async () => {
     await buildFromWorldInfo();
     colorizeAllVisible();
-    setTimeout(injectColorPickers, 300); // Ge editorn tid att ritas om
+    setTimeout(injectColorPickers, 300);
 });
 
 eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, onMessageRendered);
