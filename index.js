@@ -166,93 +166,64 @@ function onMessageRendered(mesId) {
 
 // ---------- Färgknapp i World Info-editorn ----------
 
-function createColorPicker(currentColor, onChange) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "wi-name-color-picker";
-    wrapper.style.cssText = "display:inline-flex; align-items:center; gap:6px; margin-left:8px; vertical-align:middle;";
-
-    const label = document.createElement("span");
-    label.textContent = "Färg:";
-    label.style.cssText = "font-size:12px; opacity:0.85;";
-
-    const input = document.createElement("input");
-    input.type = "color";
-    input.value = currentColor || DEFAULT_COLOR;
-    input.title = "Välj färg för detta namn i chatten";
-    input.style.cssText = "width:28px; height:22px; padding:0; border:1px solid #666; cursor:pointer; background:none;";
-
-    input.addEventListener("change", () => onChange(input.value));
-
-    wrapper.appendChild(label);
-    wrapper.appendChild(input);
-    return wrapper;
-}
-
-async function handleColorChange(bookName, uid, newColor) {
-    const data = await loadBook(bookName);
-    if (!data?.entries?.[uid]) {
-        console.warn("[WI Name Colorizer] Hittade inte entry", uid, "i", bookName);
-        return;
-    }
-
-    if (!data.entries[uid].extensions) {
-        data.entries[uid].extensions = {};
-    }
-    data.entries[uid].extensions.wiNameColor = newColor;
-
-    await saveBook(bookName, data);
-    console.log(`[WI Name Colorizer] Sparade färg ${newColor} på UID ${uid}`);
-
-    await buildFromWorldInfo();
-    colorizeAllVisible();
-}
-
 function injectColorPickers() {
-    // Den mest stabila selektorn just nu
-    const commentFields = document.querySelectorAll(".world_entry textarea[name=\"comment\"]");
+    const commentFields = document.querySelectorAll('.world_entry textarea[name="comment"]');
+    console.log(`[WI Name Colorizer] Hittade ${commentFields.length} comment-fält`);
+
+    let injected = 0;
 
     commentFields.forEach(textarea => {
         if (textarea.dataset.wiColorInjected) return;
-        textarea.dataset.wiColorInjected = "1";
 
-        const entryEl = textarea.closest(".world_entry");
+        const entryEl = textarea.closest('.world_entry');
         if (!entryEl) return;
 
-        const uid = entryEl.getAttribute("uid") || entryEl.dataset.uid;
+        const uid = entryEl.getAttribute('uid') || entryEl.dataset.uid;
         if (!uid) return;
 
-        // Hitta vilken bok som är vald i editorn
-        const bookSelect = document.querySelector("#world_editor_select");
+        const bookSelect = document.querySelector('#world_editor_select');
         const bookName = bookSelect?.value || BOOK_NAMES[0];
-
         if (!bookName) return;
 
-        // Hämta nuvarande färg och lägg till knappen
+        textarea.dataset.wiColorInjected = "1";
+        injected++;
+
+        // Skapa knappen direkt (utan att vänta på loadBook först)
+        const picker = createColorPicker(DEFAULT_COLOR, async (newColor) => {
+            await handleColorChange(bookName, uid, newColor);
+        });
+
+        // Lägg knappen precis efter textarea
+        textarea.parentNode.insertBefore(picker, textarea.nextSibling);
+
+        // Uppdatera färgen i efterhand (snyggare)
         loadBook(bookName).then(data => {
             const entry = data?.entries?.[uid];
-            const currentColor = entry ? getEntryColor(entry) : DEFAULT_COLOR;
-
-            const picker = createColorPicker(currentColor, (newColor) => {
-                handleColorChange(bookName, uid, newColor);
-            });
-
-            // Placera knappen direkt efter textarea (enklast och mest synligt)
-            textarea.parentNode.insertBefore(picker, textarea.nextSibling);
+            if (entry) {
+                const color = getEntryColor(entry);
+                const input = picker.querySelector('input[type="color"]');
+                if (input) input.value = color;
+            }
         });
     });
+
+    if (injected > 0) {
+        console.log(`[WI Name Colorizer] Injicerade ${injected} färgknappar`);
+    }
 }
 
-// Observer + manuell trigger
-const wiObserver = new MutationObserver(() => {
-    // Liten fördröjning så att SillyTavern hinner rita klart
-    setTimeout(injectColorPickers, 150);
-});
-
 function startWiObserver() {
-    const target = document.body;
-    wiObserver.observe(target, { childList: true, subtree: true });
-    // Kör också direkt
-    setTimeout(injectColorPickers, 500);
+    // Kör flera gånger med fördröjning (SillyTavern ritar entries asynkront)
+    setTimeout(injectColorPickers, 300);
+    setTimeout(injectColorPickers, 800);
+    setTimeout(injectColorPickers, 1500);
+    setTimeout(injectColorPickers, 3000);
+
+    // Observer för framtida ändringar
+    const observer = new MutationObserver(() => {
+        setTimeout(injectColorPickers, 200);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
 }
 
 // ---------- Event-lyssnare ----------
