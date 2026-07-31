@@ -1,10 +1,16 @@
 import { getRequestHeaders } from "../../../../script.js";
 
 // ========== KONFIGURATION ==========
+// Skriv de exakta namnen på dina två World Info-böcker här:
+const BOOK_NAMES = [
+    "MGOT",
+    "GOTLB"
+];
+
 const DEFAULT_COLOR = "#b0b0b0";   // Ljusgrått om ingen färg anges
 // ===================================
 
-const nameToColor = new Map(); // lowercase name → color
+const nameToColor = new Map();
 let masterRegex = null;
 
 function extractColor(comment) {
@@ -15,28 +21,7 @@ function extractColor(comment) {
 
 function isPlainKey(key) {
     const k = String(key).trim();
-    // Hoppa över rena regex-nycklar
     return k && !(k.startsWith("/") && k.lastIndexOf("/") > 0);
-}
-
-async function getActiveBookNames() {
-    try {
-        // Försök hämta listan över valda/globala böcker
-        const response = await fetch("/api/settings/get", {
-            method: "POST",
-            headers: getRequestHeaders(),
-        });
-
-        if (!response.ok) return [];
-
-        const data = await response.json();
-        // selected_world_info finns i de flesta versioner
-        const selected = data?.selected_world_info ?? data?.world_info?.selected ?? [];
-        return Array.isArray(selected) ? selected.filter(Boolean) : [];
-    } catch (err) {
-        console.warn("[WI Name Colorizer] Kunde inte hämta aktiva böcker:", err);
-        return [];
-    }
 }
 
 async function loadBook(name) {
@@ -46,7 +31,6 @@ async function loadBook(name) {
             headers: getRequestHeaders(),
             body: JSON.stringify({ name }),
         });
-
         if (!response.ok) {
             console.warn(`[WI Name Colorizer] Kunde inte hämta boken "${name}"`);
             return null;
@@ -60,20 +44,10 @@ async function loadBook(name) {
 
 async function buildFromWorldInfo() {
     try {
-        const bookNames = await getActiveBookNames();
-
-        if (bookNames.length === 0) {
-            console.log("[WI Name Colorizer] Inga aktiva World Info-böcker hittades.");
-            masterRegex = null;
-            return;
-        }
-
-        console.log("[WI Name Colorizer] Aktiva böcker:", bookNames.join(", "));
-
         nameToColor.clear();
         const names = [];
 
-        for (const bookName of bookNames) {
+        for (const bookName of BOOK_NAMES) {
             const data = await loadBook(bookName);
             if (!data?.entries) continue;
 
@@ -99,11 +73,10 @@ async function buildFromWorldInfo() {
 
         if (names.length === 0) {
             masterRegex = null;
-            console.log("[WI Name Colorizer] Inga namn hittades i de aktiva böckerna.");
+            console.log("[WI Name Colorizer] Inga namn hittades.");
             return;
         }
 
-        // Längsta namn först
         names.sort((a, b) => b.length - a.length);
 
         const escaped = names.map(n =>
@@ -115,7 +88,7 @@ async function buildFromWorldInfo() {
             "gi"
         );
 
-        console.log(`[WI Name Colorizer] Byggde regex med ${names.length} namn från ${bookNames.length} bok(ar).`);
+        console.log(`[WI Name Colorizer] Byggde regex med ${names.length} namn från ${BOOK_NAMES.length} bok(ar).`);
     } catch (err) {
         console.error("[WI Name Colorizer] Fel:", err);
     }
@@ -128,7 +101,6 @@ function getColor(name) {
 function colorizeElement(el) {
     if (!el || !masterRegex) return;
 
-    // Ta bort tidigare färgmarkeringar
     el.querySelectorAll("span[data-wi-color]").forEach(span => {
         span.replaceWith(...span.childNodes);
     });
@@ -148,7 +120,6 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
-// ========== Event-lyssnare ==========
 const context = SillyTavern.getContext();
 const { eventSource, eventTypes } = context;
 
@@ -170,5 +141,4 @@ eventSource.on(eventTypes.WORLDINFO_UPDATED, async () => {
 eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, onMessageRendered);
 eventSource.on(eventTypes.USER_MESSAGE_RENDERED, onMessageRendered);
 
-// Kör en gång direkt
 buildFromWorldInfo().then(colorizeAllVisible);
