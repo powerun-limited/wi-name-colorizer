@@ -6,7 +6,7 @@ const MODULE_NAME = "wiNameColorizer";
 const defaultSettings = {
     enabled: true,
     bookNames: ["MGOT", "GOTLB"],
-    defaultColor: "#b0b0b0",
+    defaultColor: "#ffd700",
 };
 // =====================================================
 
@@ -43,19 +43,6 @@ function debounce(fn, wait) {
 
 function escapeRegex(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function extractColorFromComment(comment) {
-    if (!comment) return null;
-    const match = String(comment).match(/#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/);
-    return match ? `#${match[1]}` : null;
-}
-
-function getEntryColor(entry) {
-    // Hex i Title/Memo har högst prioritet
-    const fromComment = extractColorFromComment(entry.comment);
-    if (fromComment) return fromComment;
-    return settings.defaultColor;
 }
 
 function isPlainKey(key) {
@@ -95,7 +82,7 @@ async function loadBook(name) {
     }
 }
 
-// ---------- Kärnlogik: färg per ENTRY ----------
+// ---------- Kärnlogik ----------
 
 async function buildFromWorldInfo() {
     if (buildPromise) return buildPromise;
@@ -112,8 +99,6 @@ async function buildFromWorldInfo() {
                 for (const entry of Object.values(data.entries)) {
                     if (entry.disable) continue;
 
-                    // EN färg för hela entryt
-                    const entryColor = getEntryColor(entry);
                     const allKeys = [...(entry.key ?? []), ...(entry.keysecondary ?? [])];
 
                     for (const raw of allKeys) {
@@ -126,10 +111,9 @@ async function buildFromWorldInfo() {
 
                         for (const name of namesToAdd) {
                             const lower = name.toLowerCase();
-                            // Första entryn som har namnet vinner
                             if (nameToColor.has(lower)) continue;
 
-                            nameToColor.set(lower, entryColor);
+                            nameToColor.set(lower, settings.defaultColor);
                             names.push(name);
                         }
                     }
@@ -150,7 +134,7 @@ async function buildFromWorldInfo() {
                 "giu"
             );
 
-            console.log(`[WI Name Colorizer] Byggde regex med ${names.length} namn från ${settings.bookNames.length} bok(ar).`);
+            console.log(`[WI Name Colorizer] Byggde regex med ${names.length} namn.`);
         } catch (err) {
             console.error("[WI Name Colorizer] Fel:", err);
         }
@@ -167,11 +151,12 @@ function getColor(name) {
     return nameToColor.get(String(name).toLowerCase()) || settings.defaultColor;
 }
 
-// ---------- Säker färgläggning ----------
+// ---------- Säker färgläggning (Regex har prioritet) ----------
 
 function colorizeElement(el) {
     if (!el || !masterRegex || !settings.enabled) return;
 
+    // Ta bort våra egna tidigare färgmarkeringar
     el.querySelectorAll("span[data-wi-color]").forEach(span => {
         span.replaceWith(document.createTextNode(span.textContent));
     });
@@ -179,10 +164,26 @@ function colorizeElement(el) {
 
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
-            const tag = node.parentElement?.tagName;
+            const parent = node.parentElement;
+            if (!parent) return NodeFilter.FILTER_REJECT;
+
+            const tag = parent.tagName;
+
+            // Rör inte kod, länkar, script osv.
             if (["SCRIPT", "STYLE", "CODE", "PRE", "A"].includes(tag)) {
                 return NodeFilter.FILTER_REJECT;
             }
+
+            // Ge Regex prioritet: om texten redan ligger inuti en <span> → lämna den
+            if (tag === "SPAN") {
+                return NodeFilter.FILTER_REJECT;
+            }
+
+            // Extra säkerhet uppåt i trädet
+            if (parent.closest("span:not([data-wi-color])")) {
+                return NodeFilter.FILTER_REJECT;
+            }
+
             return NodeFilter.FILTER_ACCEPT;
         },
     });
@@ -227,92 +228,7 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
-// ---------- Färgknapp i World Info (skriver hex i Title/Memo) ----------
-
-function createColorPicker(currentColor, onChange) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "wi-name-color-picker";
-    wrapper.style.cssText = "display:inline-flex;align-items:center;gap:6px;margin-left:8px;vertical-align:middle;";
-
-    const label = document.createElement("span");
-    label.textContent = "Färg:";
-    label.style.cssText = "font-size:12px;opacity:0.85;";
-
-    const input = document.createElement("input");
-    input.type = "color";
-    input.value = currentColor || settings.defaultColor;
-    input.title = "Färg för alla nycklar i denna entry";
-    input.style.cssText = "width:28px;height:22px;padding:0;border:1px solid #666;cursor:pointer;background:none;";
-
-    input.addEventListener("change", () => onChange(input.value));
-
-    wrapper.appendChild(label);
-    wrapper.appendChild(input);
-    return wrapper;
-}
-
-function handleColorChange(textarea, newColor) {
-    // Ta bort eventuell gammal hex-kod
-    let value = textarea.value || "";
-    value = value.replace(/\s*#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g, "").trim();
-
-    // Lägg den nya färgen i slutet
-    if (value) {
-        value = value + " " + newColor;
-    } else {
-        value = newColor;
-    }
-
-    textarea.value = value;
-
-    // Trigga SillyTaverns egen sparning
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-    textarea.dispatchEvent(new Event("change", { bubbles: true }));
-
-    // Bygg om efter en kort stund
-    setTimeout(async () => {
-        await buildFromWorldInfo();
-        colorizeAllVisible();
-    }, 700);
-}
-
-function injectColorPickers() {
-    const fields = document.querySelectorAll('.world_entry textarea[name="comment"]');
-    let injected = 0;
-
-    fields.forEach(textarea => {
-        if (textarea.dataset.wiColorInjected) return;
-        textarea.dataset.wiColorInjected = "1";
-        injected++;
-
-        // Hämta nuvarande färg från fältet
-        const currentMatch = (textarea.value || "").match(/#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/);
-        const currentColor = currentMatch ? `#${currentMatch[1]}` : settings.defaultColor;
-
-        const picker = createColorPicker(currentColor, (newColor) => {
-            handleColorChange(textarea, newColor);
-        });
-
-        textarea.parentNode.insertBefore(picker, textarea.nextSibling);
-    });
-
-    if (injected > 0) {
-        console.log(`[WI Name Colorizer] Injicerade ${injected} färgknappar`);
-    }
-}
-
-function startWiObserver() {
-    setTimeout(injectColorPickers, 400);
-    setTimeout(injectColorPickers, 1000);
-    setTimeout(injectColorPickers, 2000);
-
-    const observer = new MutationObserver(() => {
-        setTimeout(injectColorPickers, 250);
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-}
-
-// ---------- Enkel settings-panel ----------
+// ---------- Settings-panel ----------
 
 function injectSettingsPanel() {
     if (document.getElementById("wnc_panel")) return;
@@ -332,7 +248,7 @@ function injectSettingsPanel() {
                 </label>
                 <label>World Info-böcker (kommaseparerat)</label>
                 <input type="text" id="wnc_books" class="text_pole" value="${settings.bookNames.join(", ")}">
-                <label>Standardfärg</label>
+                <label>Färg</label>
                 <input type="color" id="wnc_default_color" value="${settings.defaultColor}">
                 <button id="wnc_rebuild" class="menu_button" style="margin-top:8px;">Bygg om från World Info</button>
             </div>
@@ -345,8 +261,9 @@ function injectSettingsPanel() {
     document.getElementById("wnc_enabled")?.addEventListener("change", (e) => {
         settings.enabled = e.target.checked;
         saveSettingsDebounced();
-        if (settings.enabled) colorizeAllVisible();
-        else {
+        if (settings.enabled) {
+            colorizeAllVisible();
+        } else {
             document.querySelectorAll("#chat span[data-wi-color]").forEach(span => {
                 span.replaceWith(document.createTextNode(span.textContent));
             });
@@ -362,7 +279,10 @@ function injectSettingsPanel() {
     document.getElementById("wnc_default_color")?.addEventListener("change", (e) => {
         settings.defaultColor = e.target.value;
         saveSettingsDebounced();
-        buildFromWorldInfo().then(colorizeAllVisible);
+        for (const key of nameToColor.keys()) {
+            nameToColor.set(key, settings.defaultColor);
+        }
+        colorizeAllVisible();
     });
 
     document.getElementById("wnc_rebuild")?.addEventListener("click", async () => {
@@ -400,7 +320,6 @@ const debouncedBuild = debounce(async (bookName) => {
 eventSource.on(eventTypes.APP_READY, async () => {
     injectSettingsPanel();
     setupChatObserver();
-    startWiObserver();
     await buildFromWorldInfo();
     colorizeAllVisible();
 });
@@ -411,4 +330,3 @@ eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, onMessageRendered);
 eventSource.on(eventTypes.USER_MESSAGE_RENDERED, onMessageRendered);
 
 buildFromWorldInfo().then(colorizeAllVisible);
-startWiObserver();
