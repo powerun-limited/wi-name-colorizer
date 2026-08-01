@@ -254,13 +254,22 @@ function renderNameList() {
 }
 
 function bindSettingsEvents() {
-    $(document).on("input", ".wnc-color-input", function () {
+    // Fungerar både på input och change (viktigt på mobil)
+    $(document).on("input change", ".wnc-color-input", function () {
         const lower = $(this).data("name");
         const color = $(this).val();
+        if (!lower || !color) return;
+
         settings.colors[lower] = color;
         nameToColor.set(lower, color);
         saveSettingsDebounced();
         colorizeAllVisible();
+
+        // Uppdatera ✏️-markeringen i listan
+        const $row = $(this).closest(".wnc-row");
+        $row.find("span").first().text(
+            $row.find("span").first().text().replace(" ✏️", "") + " ✏️"
+        );
     });
 
     $(document).on("click", ".wnc-reset", function () {
