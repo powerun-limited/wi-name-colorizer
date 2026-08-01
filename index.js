@@ -136,6 +136,18 @@ function rgbToHex(rgb) {
     return '#' + m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
 }
 
+// ---------- Markeringsskydd ----------
+// Returnerar true om det finns en aktiv (ej kollapsad) textmarkering
+// som overlap-par med det givna elementet.
+function hasActiveSelection(el) {
+    try {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
+        const range = sel.getRangeAt(0);
+        return el.contains(range.startContainer) || el.contains(range.endContainer);
+    } catch { return false; }
+}
+
 // ---------- Custom Color Picker ----------
 const PRESET_COLORS = [
     "#ff4444", "#ff8800", "#ffdd00", "#88ff00",
@@ -151,32 +163,39 @@ const PRESET_COLORS = [
 let activeColorPicker = null;
 
 // ---- Capture-phase interceptor ----
-// VIKTIGT: Bara pointer-down events! Inte click!
-// Om vi stopPropagation() på click i capture-phase når klicket aldrig fram
-// till swatches/knappar. mousedown räcker för att blockera STs outside-click.
+// VIKTIGT: Dessa listeners registreras nu ENDAST när pickern är öppen
+// och avregistreras när den stängs. När pickern är stängd körs INGEN
+// interceptor alls → noll påverkan på textmarkering/skroll etc.
 const INTERCEPT_EVENTS = ['mousedown', 'pointerdown', 'touchstart'];
 
 function colorPickerInterceptor(e) {
     if (!activeColorPicker) return;
     if (activeColorPicker.contains(e.target)) {
-        // Klick inuti pickern → stoppa innan ST ser det → WI stängs inte
         e.stopPropagation();
         return;
     }
-    // Klick utanför pickern → stäng pickern
     if (!e.target.closest || !e.target.closest('.wnc-color-picker-popup')) {
         closeColorPicker();
     }
 }
 
-INTERCEPT_EVENTS.forEach(evt => {
-    document.addEventListener(evt, colorPickerInterceptor, true);
-});
+function registerInterceptor() {
+    INTERCEPT_EVENTS.forEach(evt => {
+        document.addEventListener(evt, colorPickerInterceptor, true);
+    });
+}
+
+function unregisterInterceptor() {
+    INTERCEPT_EVENTS.forEach(evt => {
+        document.removeEventListener(evt, colorPickerInterceptor, true);
+    });
+}
 
 function closeColorPicker() {
     if (activeColorPicker) {
         activeColorPicker.remove();
         activeColorPicker = null;
+        unregisterInterceptor();
     }
 }
 
@@ -321,6 +340,9 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         resetBtn.addEventListener('click', (e) => { e.stopPropagation(); onReset(); closeColorPicker(); });
         popup.appendChild(resetBtn);
     }
+
+    // ---- Registrera interceptorn FÖRST (innan popupen visas) ----
+    registerInterceptor();
 
     // Append till body
     document.body.appendChild(popup);
@@ -472,6 +494,9 @@ function getColor(name) {
 // ---------- Säker färgläggning ----------
 function colorizeElement(el) {
     if (!el || !masterRegex || !settings.enabled) return;
+    // ⬇️ Hoppa över om användaren håller på att markera text i detta element
+    if (hasActiveSelection(el)) return;
+
     el.querySelectorAll("span[data-wi-color]").forEach(span => {
         span.replaceWith(document.createTextNode(span.textContent));
     });
@@ -792,18 +817,40 @@ function injectSettingsPanel() {
     });
 }
 
-// ---------- Chat-observer ----------
+// ---------- Chat-observer (smart, ej global refresh) ----------
 let chatObserver = null;
 function setupChatObserver() {
     const chat = document.getElementById("chat");
     if (!chat) return;
-    const debouncedRecolor = debounce(() => {
+
+    const debouncedRecolor = debounce((mutations) => {
+        // ⬇️ Hoppa över helt om användaren markerar text i chatten
+        if (hasActiveSelection(chat)) return;
+
         chatObserver?.disconnect();
-        colorizeAllVisible();
-        chatObserver?.observe(chat, { childList: true, subtree: true, characterData: true });
-    }, 250);
+
+        // ⬇️ Färglägg ENDAST tillagda noder, inte hela chatten
+        if (mutations) {
+            const toColorize = new Set();
+            for (const mut of mutations) {
+                mut.addedNodes.forEach(node => {
+                    if (node.nodeType === 1) {
+                        if (node.matches && node.matches('.mes_text')) toColorize.add(node);
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll('.mes_text').forEach(n => toColorize.add(n));
+                        }
+                    }
+                });
+            }
+            toColorize.forEach(colorizeElement);
+        }
+
+        chatObserver?.observe(chat, { childList: true, subtree: true });
+    }, 300);
+
     chatObserver = new MutationObserver(debouncedRecolor);
-    chatObserver.observe(chat, { childList: true, subtree: true, characterData: true });
+    // ⬇️ Enbart childList + subtree. INTE characterData (det triggar för mycket).
+    chatObserver.observe(chat, { childList: true, subtree: true });
 }
 
 // ---------- Events ----------
