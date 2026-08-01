@@ -7,7 +7,6 @@ const defaultSettings = {
     enabled: true,
     bookNames: ["MGOT", "GOTLB"],
     defaultColor: "#b0b0b0",
-    colors: {}, // { "namn (lowercase)": "#rrggbb" } – dina egna färgval, har alltid högst prioritet
 };
 // =====================================================
 
@@ -28,10 +27,8 @@ function getSettings() {
 
 const settings = getSettings();
 
-// ---------- Runtime-state ----------
-const nameToColor = new Map();   // lowercase namn -> aktiv färg
+const nameToColor = new Map();
 let masterRegex = null;
-let discoveredNames = [];        // originalstavning, för UI-listan
 let buildPromise = null;
 
 // ---------- Hjälpfunktioner ----------
@@ -48,10 +45,20 @@ function escapeRegex(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function extractColor(comment) {
+function extractColorFromComment(comment) {
     if (!comment) return null;
     const match = String(comment).match(/#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/);
     return match ? `#${match[1]}` : null;
+}
+
+function getEntryColor(entry) {
+    // 1. Sparad färg från färgknappen
+    if (entry.extensions?.wiNameColor) return entry.extensions.wiNameColor;
+    // 2. Hex i Title/Memo
+    const fromComment = extractColorFromComment(entry.comment);
+    if (fromComment) return fromComment;
+    // 3. Standard
+    return settings.defaultColor;
 }
 
 function isPlainKey(key) {
@@ -62,7 +69,6 @@ function isPlainKey(key) {
 function extractNamesFromRegexKey(key) {
     const k = String(key).trim();
     const names = [];
-    // Hämtar ALLA parentesgrupper, inte bara den första
     for (const m of k.matchAll(/\(([^)]+)\)/g)) {
         names.push(
             ...m[1]
@@ -92,16 +98,27 @@ async function loadBook(name) {
     }
 }
 
-// ---------- Kärnlogik ----------
+async function saveBook(name, data) {
+    try {
+        await fetch("/api/worldinfo/edit", {
+            method: "POST",
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name, data }),
+        });
+    } catch (err) {
+        console.error(`[WI Name Colorizer] Kunde inte spara boken "${name}":`, err);
+    }
+}
+
+// ---------- Kärnlogik: färg per ENTRY ----------
 
 async function buildFromWorldInfo() {
-    // Skydd mot parallella/dubbla anrop
     if (buildPromise) return buildPromise;
 
     buildPromise = (async () => {
         try {
             nameToColor.clear();
-            discoveredNames = [];
+            const names = [];
 
             for (const bookName of settings.bookNames) {
                 const data = await loadBook(bookName);
@@ -110,7 +127,8 @@ async function buildFromWorldInfo() {
                 for (const entry of Object.values(data.entries)) {
                     if (entry.disable) continue;
 
-                    const wiColor = extractColor(entry.comment);
+                    // EN färg för hela entryt
+                    const entryColor = getEntryColor(entry);
                     const allKeys = [...(entry.key ?? []), ...(entry.keysecondary ?? [])];
 
                     for (const raw of allKeys) {
@@ -123,34 +141,31 @@ async function buildFromWorldInfo() {
 
                         for (const name of namesToAdd) {
                             const lower = name.toLowerCase();
+                            // Första entryn som har namnet vinner
                             if (nameToColor.has(lower)) continue;
 
-                            // Prioritet: användarens egen färg > WI-kommentar > global standardfärg
-                            const color = settings.colors[lower] ?? wiColor ?? settings.defaultColor;
-
-                            nameToColor.set(lower, color);
-                            discoveredNames.push(name);
+                            nameToColor.set(lower, entryColor);
+                            names.push(name);
                         }
                     }
                 }
             }
 
-            if (discoveredNames.length === 0) {
+            if (names.length === 0) {
                 masterRegex = null;
                 console.log("[WI Name Colorizer] Inga namn hittades.");
                 return;
             }
 
-            const sorted = [...discoveredNames].sort((a, b) => b.length - a.length);
+            const sorted = [...names].sort((a, b) => b.length - a.length);
             const escaped = sorted.map(escapeRegex);
 
-            // Unicode-medvetna ordgränser (funkar även med å/ä/ö/é osv., till skillnad från \b)
             masterRegex = new RegExp(
                 `(?<![\\p{L}\\p{N}_])(${escaped.join("|")})(['’]s?)?(?![\\p{L}\\p{N}_])`,
                 "giu"
             );
 
-            console.log(`[WI Name Colorizer] Byggde regex med ${discoveredNames.length} namn från ${settings.bookNames.length} bok(ar).`);
+            console.log(`[WI Name Colorizer] Byggde regex med ${names.length} namn från ${settings.bookNames.length} bok(ar).`);
         } catch (err) {
             console.error("[WI Name Colorizer] Fel:", err);
         }
@@ -167,12 +182,11 @@ function getColor(name) {
     return nameToColor.get(String(name).toLowerCase()) || settings.defaultColor;
 }
 
-// ---------- Säker färgläggning (ingen innerHTML) ----------
+// ---------- Säker färgläggning ----------
 
 function colorizeElement(el) {
     if (!el || !masterRegex || !settings.enabled) return;
 
-    // Packa upp gamla highlight-spans utan att röra annan markup
     el.querySelectorAll("span[data-wi-color]").forEach(span => {
         span.replaceWith(document.createTextNode(span.textContent));
     });
@@ -181,7 +195,6 @@ function colorizeElement(el) {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
             const tag = node.parentElement?.tagName;
-            // Rör inte kod, länkar eller redan formaterad text
             if (["SCRIPT", "STYLE", "CODE", "PRE", "A"].includes(tag)) {
                 return NodeFilter.FILTER_REJECT;
             }
@@ -203,7 +216,7 @@ function colorizeElement(el) {
         let lastIndex = 0;
         let match;
         while ((match = masterRegex.exec(text))) {
-            const [full, name, poss] = match;
+            const [full, name] = match;
             if (match.index > lastIndex) {
                 frag.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
             }
@@ -229,137 +242,166 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
-// ---------- Inställningspanel (UI med färgväljare) ----------
+// ---------- Färgknapp i World Info-editorn ----------
 
-function renderNameList() {
-    const $list = $("#wnc_name_list");
-    if (!$list.length) return;
-    $list.empty();
+function createColorPicker(currentColor, onChange) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "wi-name-color-picker";
+    wrapper.style.cssText = "display:inline-flex;align-items:center;gap:6px;margin-left:8px;vertical-align:middle;";
 
-    const sorted = [...discoveredNames].sort((a, b) => a.localeCompare(b));
-    for (const name of sorted) {
-        const lower = name.toLowerCase();
-        const color = nameToColor.get(lower) || settings.defaultColor;
-        const overridden = Object.hasOwn(settings.colors, lower);
+    const label = document.createElement("span");
+    label.textContent = "Färg:";
+    label.style.cssText = "font-size:12px;opacity:0.85;";
 
-        const row = $(`
-            <div class="wnc-row" style="display:flex;align-items:center;gap:8px;margin:4px 0;">
-                <input type="color" class="wnc-color-input" value="${color}" data-name="${lower}" style="width:36px;height:24px;padding:0;border:none;">
-                <span style="flex:1;">${name}${overridden ? " ✏️" : ""}</span>
-                <button class="menu_button wnc-reset" data-name="${lower}" title="Återställ till WI/standard">↺</button>
-            </div>
-        `);
-        $list.append(row);
-    }
+    const input = document.createElement("input");
+    input.type = "color";
+    input.value = currentColor || settings.defaultColor;
+    input.title = "Färg för alla nycklar i denna entry";
+    input.style.cssText = "width:28px;height:22px;padding:0;border:1px solid #666;cursor:pointer;background:none;";
+
+    input.addEventListener("change", () => onChange(input.value));
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(input);
+    return wrapper;
 }
 
-function bindSettingsEvents() {
-    // Fungerar både på input och change (viktigt på mobil)
-    $(document).on("input change", ".wnc-color-input", function () {
-        const lower = $(this).data("name");
-        const color = $(this).val();
-        if (!lower || !color) return;
+async function handleColorChange(bookName, uid, newColor) {
+    console.log(`[WI Name Colorizer] Sparar färg ${newColor} på UID \( {uid} i " \){bookName}"`);
 
-        settings.colors[lower] = color;
-        nameToColor.set(lower, color);
-        saveSettingsDebounced();
-        colorizeAllVisible();
+    const data = await loadBook(bookName);
+    if (!data?.entries) return;
 
-        // Uppdatera ✏️-markeringen i listan
-        const $row = $(this).closest(".wnc-row");
-        $row.find("span").first().text(
-            $row.find("span").first().text().replace(" ✏️", "") + " ✏️"
-        );
-    });
+    let entry = data.entries[uid] || data.entries[String(uid)] || data.entries[Number(uid)];
+    if (!entry) {
+        console.warn("[WI Name Colorizer] Hittade inte entry", uid);
+        return;
+    }
 
-    $(document).on("click", ".wnc-reset", function () {
-        const lower = $(this).data("name");
-        delete settings.colors[lower];
-        saveSettingsDebounced();
-        buildFromWorldInfo().then(() => {
-            renderNameList();
-            colorizeAllVisible();
+    if (!entry.extensions) entry.extensions = {};
+    entry.extensions.wiNameColor = newColor;
+    data.entries[entry.uid ?? uid] = entry;
+
+    await saveBook(bookName, data);
+    console.log(`[WI Name Colorizer] Sparat.`);
+
+    await buildFromWorldInfo();
+    colorizeAllVisible();
+}
+
+function injectColorPickers() {
+    const fields = document.querySelectorAll('.world_entry textarea[name="comment"]');
+    let injected = 0;
+
+    fields.forEach(textarea => {
+        if (textarea.dataset.wiColorInjected) return;
+
+        const entryEl = textarea.closest(".world_entry");
+        if (!entryEl) return;
+
+        const uid = entryEl.getAttribute("uid") || entryEl.dataset.uid;
+        if (!uid) return;
+
+        const bookSelect = document.querySelector("#world_editor_select");
+        const bookName = bookSelect?.value || settings.bookNames[0];
+        if (!bookName) return;
+
+        textarea.dataset.wiColorInjected = "1";
+        injected++;
+
+        const picker = createColorPicker(settings.defaultColor, (newColor) => {
+            handleColorChange(bookName, uid, newColor);
+        });
+
+        textarea.parentNode.insertBefore(picker, textarea.nextSibling);
+
+        // Sätt rätt färg i efterhand
+        loadBook(bookName).then(data => {
+            const entry = data?.entries?.[uid] || data?.entries?.[String(uid)] || data?.entries?.[Number(uid)];
+            if (entry) {
+                const color = getEntryColor(entry);
+                const input = picker.querySelector('input[type="color"]');
+                if (input) input.value = color;
+            }
         });
     });
 
-    $(document).on("change", "#wnc_enabled", function () {
-        settings.enabled = $(this).is(":checked");
+    if (injected > 0) {
+        console.log(`[WI Name Colorizer] Injicerade ${injected} färgknappar`);
+    }
+}
+
+function startWiObserver() {
+    setTimeout(injectColorPickers, 400);
+    setTimeout(injectColorPickers, 1000);
+    setTimeout(injectColorPickers, 2000);
+
+    const observer = new MutationObserver(() => {
+        setTimeout(injectColorPickers, 250);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// ---------- Enkel settings-panel (ingen jättelista) ----------
+
+function injectSettingsPanel() {
+    if (document.getElementById("wnc_panel")) return;
+
+    const panel = document.createElement("div");
+    panel.id = "wnc_panel";
+    panel.innerHTML = `
+        <div class="inline-drawer">
+            <div class="inline-drawer-toggle inline-drawer-header">
+                <b>WI Name Colorizer</b>
+                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+            </div>
+            <div class="inline-drawer-content">
+                <label class="checkbox_label">
+                    <input type="checkbox" id="wnc_enabled" ${settings.enabled ? "checked" : ""}>
+                    Aktivera färgläggning
+                </label>
+                <label>World Info-böcker (kommaseparerat)</label>
+                <input type="text" id="wnc_books" class="text_pole" value="${settings.bookNames.join(", ")}">
+                <label>Standardfärg</label>
+                <input type="color" id="wnc_default_color" value="${settings.defaultColor}">
+                <button id="wnc_rebuild" class="menu_button" style="margin-top:8px;">Bygg om från World Info</button>
+            </div>
+        </div>
+    `;
+
+    const target = document.querySelector("#extensions_settings2") || document.querySelector("#extensions_settings");
+    if (target) target.appendChild(panel);
+
+    document.getElementById("wnc_enabled")?.addEventListener("change", (e) => {
+        settings.enabled = e.target.checked;
         saveSettingsDebounced();
-        if (settings.enabled) {
-            colorizeAllVisible();
-        } else {
+        if (settings.enabled) colorizeAllVisible();
+        else {
             document.querySelectorAll("#chat span[data-wi-color]").forEach(span => {
                 span.replaceWith(document.createTextNode(span.textContent));
             });
         }
     });
 
-    $(document).on("change", "#wnc_default_color", function () {
-        settings.defaultColor = $(this).val();
+    document.getElementById("wnc_books")?.addEventListener("change", (e) => {
+        settings.bookNames = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
         saveSettingsDebounced();
-        buildFromWorldInfo().then(() => {
-            renderNameList();
-            colorizeAllVisible();
-        });
+        buildFromWorldInfo().then(colorizeAllVisible);
     });
 
-    $(document).on("change", "#wnc_books", function () {
-        settings.bookNames = $(this)
-            .val()
-            .split(",")
-            .map(s => s.trim())
-            .filter(Boolean);
+    document.getElementById("wnc_default_color")?.addEventListener("change", (e) => {
+        settings.defaultColor = e.target.value;
         saveSettingsDebounced();
-        buildFromWorldInfo().then(() => {
-            renderNameList();
-            colorizeAllVisible();
-        });
+        buildFromWorldInfo().then(colorizeAllVisible);
     });
 
-    $(document).on("click", "#wnc_rebuild", async () => {
+    document.getElementById("wnc_rebuild")?.addEventListener("click", async () => {
         await buildFromWorldInfo();
-        renderNameList();
         colorizeAllVisible();
     });
 }
 
-function injectSettingsPanel() {
-    if ($("#wnc_panel").length) return;
-
-    const panel = $(`
-        <div id="wnc_panel">
-            <div class="inline-drawer">
-                <div class="inline-drawer-toggle inline-drawer-header">
-                    <b>WI Name Colorizer</b>
-                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-                </div>
-                <div class="inline-drawer-content">
-                    <label class="checkbox_label">
-                        <input type="checkbox" id="wnc_enabled" ${settings.enabled ? "checked" : ""}>
-                        Aktivera färgläggning
-                    </label>
-
-                    <label>World Info-böcker (kommaseparerat)</label>
-                    <input type="text" id="wnc_books" class="text_pole" value="${settings.bookNames.join(", ")}">
-
-                    <label>Standardfärg (om inget annat anges)</label>
-                    <input type="color" id="wnc_default_color" value="${settings.defaultColor}">
-
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px;">
-                        <b>Namn &amp; färger</b>
-                        <button id="wnc_rebuild" class="menu_button">Bygg om från World Info</button>
-                    </div>
-                    <div id="wnc_name_list" style="max-height:300px;overflow-y:auto;margin-top:6px;"></div>
-                </div>
-            </div>
-        </div>
-    `);
-
-    $("#extensions_settings2").append(panel);
-    renderNameList();
-}
-
-// ---------- Live-uppdatering, även under streaming ----------
+// ---------- Chat-observer ----------
 
 let chatObserver = null;
 
@@ -377,26 +419,26 @@ function setupChatObserver() {
     chatObserver.observe(chat, { childList: true, subtree: true, characterData: true });
 }
 
-// ---------- Event-lyssnare ----------
+// ---------- Events ----------
 
 const debouncedBuild = debounce(async (bookName) => {
     if (bookName && !settings.bookNames.includes(bookName)) return;
     await buildFromWorldInfo();
-    renderNameList();
     colorizeAllVisible();
 }, 300);
 
 eventSource.on(eventTypes.APP_READY, async () => {
     injectSettingsPanel();
-    bindSettingsEvents();
     setupChatObserver();
+    startWiObserver();
     await buildFromWorldInfo();
-    renderNameList();
     colorizeAllVisible();
 });
 
 eventSource.on(eventTypes.CHAT_CHANGED, () => debouncedBuild());
 eventSource.on(eventTypes.WORLDINFO_UPDATED, (name) => debouncedBuild(name));
-
 eventSource.on(eventTypes.CHARACTER_MESSAGE_RENDERED, onMessageRendered);
 eventSource.on(eventTypes.USER_MESSAGE_RENDERED, onMessageRendered);
+
+buildFromWorldInfo().then(colorizeAllVisible);
+startWiObserver();
