@@ -150,29 +150,25 @@ const PRESET_COLORS = [
 
 let activeColorPicker = null;
 
-// ---- Capture-phase interceptor (hindrar ST att stänga WI-popupen) ----
-const INTERCEPT_EVENTS = ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel', 'dblclick', 'contextmenu'];
+// ---- Capture-phase interceptor ----
+// VIKTIGT: Bara pointer-down events! Inte click!
+// Om vi stopPropagation() på click i capture-phase når klicket aldrig fram
+// till swatches/knappar. mousedown räcker för att blockera STs outside-click.
+const INTERCEPT_EVENTS = ['mousedown', 'pointerdown', 'touchstart'];
 
 function colorPickerInterceptor(e) {
     if (!activeColorPicker) return;
-    // Om klicket är inuti vår picker → stoppa propagation innan ST hinner se det
     if (activeColorPicker.contains(e.target)) {
+        // Klick inuti pickern → stoppa innan ST ser det → WI stängs inte
         e.stopPropagation();
         return;
     }
-    // Om klicket är på en trigger-knapp → stoppa också
-    if (e.target.closest && e.target.closest('.wnc-color-trigger')) {
-        e.stopPropagation();
-        return;
-    }
-    // Om klicket är utanför pickern → stäng pickern
-    // (men låt eventet fortsätta så ST kan stänga WI om det är utanför WI också)
+    // Klick utanför pickern → stäng pickern
     if (!e.target.closest || !e.target.closest('.wnc-color-picker-popup')) {
         closeColorPicker();
     }
 }
 
-// Registrera interceptorn EN gång, i capture-phase (före STs egna listeners)
 INTERCEPT_EVENTS.forEach(evt => {
     document.addEventListener(evt, colorPickerInterceptor, true);
 });
@@ -207,7 +203,11 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         swatch.style.cssText = `width: 100%; aspect-ratio: 1; background: ${color}; border-radius: 4px; cursor: pointer; border: 1px solid rgba(255,255,255,0.15); transition: transform 0.1s;`;
         swatch.addEventListener('mouseenter', () => swatch.style.transform = 'scale(1.15)');
         swatch.addEventListener('mouseleave', () => swatch.style.transform = 'scale(1)');
-        swatch.addEventListener('click', (e) => { e.stopPropagation(); onSelect(color); closeColorPicker(); });
+        swatch.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onSelect(color);
+            closeColorPicker();
+        });
         paletteSection.appendChild(swatch);
     });
     popup.appendChild(paletteSection);
@@ -322,31 +322,24 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         popup.appendChild(resetBtn);
     }
 
-    // ---- Append till body (inte inuti WI-popupen) ----
-    // Detta säkerställer korrekt positionering med position: fixed
+    // Append till body
     document.body.appendChild(popup);
     activeColorPicker = popup;
 
-    // ---- Positionera relativt viewport (fungerar nu korrekt) ----
+    // Positionera
     const rect = anchorEl.getBoundingClientRect();
-    // Vänta en frame så popupen har renderats innan vi mäter
     requestAnimationFrame(() => {
         const popupRect = popup.getBoundingClientRect();
         let left = rect.left;
         let top = rect.bottom + 4;
-
-        // Justera horisontellt
         if (left + popupRect.width > window.innerWidth - 8) {
             left = rect.right - popupRect.width;
         }
         if (left < 8) left = 8;
-
-        // Justera vertikalt
         if (top + popupRect.height > window.innerHeight - 8) {
             top = rect.top - popupRect.height - 4;
         }
         if (top < 8) top = 8;
-
         popup.style.left = `${left}px`;
         popup.style.top = `${top}px`;
     });
