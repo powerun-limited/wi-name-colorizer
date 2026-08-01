@@ -87,13 +87,9 @@ function hexToHsl(hex) {
     let r = parseInt(hex.slice(1, 3), 16) / 255;
     let g = parseInt(hex.slice(3, 5), 16) / 255;
     let b = parseInt(hex.slice(5, 7), 16) / 255;
-
     let max = Math.max(r, g, b), min = Math.min(r, g, b);
     let h, s, l = (max + min) / 2;
-
-    if (max === min) {
-        h = s = 0;
-    } else {
+    if (max === min) { h = s = 0; } else {
         let d = max - min;
         s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
         switch (max) {
@@ -107,17 +103,11 @@ function hexToHsl(hex) {
 }
 
 function hslToHex(h, s, l) {
-    h = h / 360;
-    s = s / 100;
-    l = l / 100;
-
+    h = h / 360; s = s / 100; l = l / 100;
     let r, g, b;
-    if (s === 0) {
-        r = g = b = l;
-    } else {
+    if (s === 0) { r = g = b = l; } else {
         const hue2rgb = (p, q, t) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
+            if (t < 0) t += 1; if (t > 1) t -= 1;
             if (t < 1/6) return p + (q - p) * 6 * t;
             if (t < 1/2) return q;
             if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
@@ -129,7 +119,6 @@ function hslToHex(h, s, l) {
         g = hue2rgb(p, q, h);
         b = hue2rgb(p, q, h - 1/3);
     }
-
     const toHex = (x) => {
         const hex = Math.round(x * 255).toString(16);
         return hex.length === 1 ? "0" + hex : hex;
@@ -141,6 +130,12 @@ function isValidHex(str) {
     return /^#[0-9a-fA-F]{6}$/.test(str);
 }
 
+function rgbToHex(rgb) {
+    const m = rgb.match(/\d+/g);
+    if (!m || m.length < 3) return '#ffffff';
+    return '#' + m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
+}
+
 // ---------- Custom Color Picker ----------
 const PRESET_COLORS = [
     "#ff4444", "#ff8800", "#ffdd00", "#88ff00",
@@ -149,8 +144,6 @@ const PRESET_COLORS = [
     "#ffaa44", "#ffee88", "#aaffaa", "#44ddaa",
     "#66ccff", "#aa88ff", "#ddaaff", "#ff88cc",
     "#ffffff", "#cccccc", "#888888", "#444444",
-    "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71",
-    "#1abc9c", "#3498db", "#9b59b6", "#e91e63",
 ];
 
 let activeColorPicker = null;
@@ -171,92 +164,48 @@ function onColorPickerOutsideClick(e) {
 
 function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
     closeColorPicker();
-
     const popup = document.createElement('div');
     popup.className = 'wnc-color-picker-popup';
     popup.style.cssText = `
-        position: fixed;
-        z-index: 100000;
+        position: fixed; z-index: 100000;
         background: var(--SmartThemeBlurTintColor, #1a1a2e);
         border: 1px solid var(--SmartThemeBorderColor, #555);
-        border-radius: 8px;
-        padding: 10px;
+        border-radius: 8px; padding: 10px;
         box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-        width: 240px;
-        font-size: 13px;
+        width: 240px; font-size: 13px;
         color: var(--SmartThemeBodyColor, #eee);
     `;
-
-    // ---- Förinställd palett ----
+    // Palett
     const paletteSection = document.createElement('div');
-    paletteSection.style.cssText = `
-        display: grid;
-        grid-template-columns: repeat(8, 1fr);
-        gap: 3px;
-        margin-bottom: 10px;
-    `;
-
+    paletteSection.style.cssText = 'display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-bottom: 10px;';
     PRESET_COLORS.forEach(color => {
         const swatch = document.createElement('div');
-        swatch.style.cssText = `
-            width: 100%;
-            aspect-ratio: 1;
-            background: ${color};
-            border-radius: 4px;
-            cursor: pointer;
-            border: 1px solid rgba(255,255,255,0.15);
-            transition: transform 0.1s;
-        `;
-        swatch.addEventListener('mouseenter', () => {
-            swatch.style.transform = 'scale(1.15)';
-        });
-        swatch.addEventListener('mouseleave', () => {
-            swatch.style.transform = 'scale(1)';
-        });
-        swatch.addEventListener('click', () => {
-            onSelect(color);
-            closeColorPicker();
-        });
+        swatch.style.cssText = `width: 100%; aspect-ratio: 1; background: ${color}; border-radius: 4px; cursor: pointer; border: 1px solid rgba(255,255,255,0.15); transition: transform 0.1s;`;
+        swatch.addEventListener('mouseenter', () => swatch.style.transform = 'scale(1.15)');
+        swatch.addEventListener('mouseleave', () => swatch.style.transform = 'scale(1)');
+        swatch.addEventListener('click', () => { onSelect(color); closeColorPicker(); });
         paletteSection.appendChild(swatch);
     });
-
     popup.appendChild(paletteSection);
-
-    // ---- Separator ----
     const sep1 = document.createElement('hr');
     sep1.style.cssText = 'border: 0; border-top: 1px solid var(--SmartThemeBorderColor, #444); margin: 8px 0;';
     popup.appendChild(sep1);
-
-    // ---- HSL Sliders ----
+    // HSL sliders
     let [h, s, l] = hexToHsl(currentColor);
-
     const sliderContainer = document.createElement('div');
     sliderContainer.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
-
     function makeSlider(label, max, getValue, onChange, gradient) {
         const row = document.createElement('div');
         row.style.cssText = 'display: flex; align-items: center; gap: 6px;';
-
         const lab = document.createElement('span');
         lab.textContent = label;
         lab.style.cssText = 'width: 12px; font-size: 11px; opacity: 0.7;';
         row.appendChild(lab);
-
         const slider = document.createElement('input');
         slider.type = 'range';
-        slider.min = '0';
-        slider.max = String(max);
+        slider.min = '0'; slider.max = String(max);
         slider.value = String(getValue());
-        slider.style.cssText = `
-            flex: 1;
-            height: 16px;
-            -webkit-appearance: none;
-            appearance: none;
-            background: ${gradient};
-            border-radius: 8px;
-            outline: none;
-            cursor: pointer;
-        `;
+        slider.style.cssText = `flex: 1; height: 16px; -webkit-appearance: none; appearance: none; background: ${gradient}; border-radius: 8px; outline: none; cursor: pointer;`;
         slider.addEventListener('input', () => {
             onChange(parseInt(slider.value));
             const newColor = hslToHex(h, s, l);
@@ -266,62 +215,32 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         row.appendChild(slider);
         return { row, slider };
     }
-
-    // Hue slider
     const hueGradient = 'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)';
     const hueSlider = makeSlider('H', 360, () => h, (v) => { h = v; updateSliders(); }, hueGradient);
-
-    // Saturation slider
-    const satGradient = `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`;
-    const satSlider = makeSlider('S', 100, () => s, (v) => { s = v; updateSliders(); }, satGradient);
-
-    // Lightness slider
-    const lightGradient = `linear-gradient(to right, #000, hsl(${h},${s}%,50%), #fff)`;
-    const lightSlider = makeSlider('L', 100, () => l, (v) => { l = v; updateSliders(); }, lightGradient);
-
+    const satSlider = makeSlider('S', 100, () => s, (v) => { s = v; updateSliders(); }, `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`);
+    const lightSlider = makeSlider('L', 100, () => l, (v) => { l = v; updateSliders(); }, `linear-gradient(to right, #000, hsl(${h},${s}%,50%), #fff)`);
     function updateSliders() {
         satSlider.slider.style.background = `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`;
         lightSlider.slider.style.background = `linear-gradient(to right, #000, hsl(${h},${s}%,50%), #fff)`;
     }
-
     sliderContainer.appendChild(hueSlider.row);
     sliderContainer.appendChild(satSlider.row);
     sliderContainer.appendChild(lightSlider.row);
     popup.appendChild(sliderContainer);
-
-    // ---- Hex input + preview ----
     const sep2 = document.createElement('hr');
     sep2.style.cssText = 'border: 0; border-top: 1px solid var(--SmartThemeBorderColor, #444); margin: 8px 0;';
     popup.appendChild(sep2);
-
+    // Hex + preview
     const bottomRow = document.createElement('div');
     bottomRow.style.cssText = 'display: flex; align-items: center; gap: 6px;';
-
     const preview = document.createElement('div');
-    preview.style.cssText = `
-        width: 28px; height: 28px; border-radius: 4px;
-        background: ${currentColor};
-        border: 1px solid rgba(255,255,255,0.2);
-        flex-shrink: 0;
-    `;
+    preview.style.cssText = `width: 28px; height: 28px; border-radius: 4px; background: ${currentColor}; border: 1px solid rgba(255,255,255,0.2); flex-shrink: 0;`;
     bottomRow.appendChild(preview);
-
     const hexInput = document.createElement('input');
     hexInput.type = 'text';
     hexInput.value = currentColor;
     hexInput.maxLength = 7;
-    hexInput.style.cssText = `
-        flex: 1;
-        background: var(--SmartThemeBlurTintColor, #222);
-        color: var(--SmartThemeBodyColor, #eee);
-        border: 1px solid var(--SmartThemeBorderColor, #555);
-        border-radius: 4px;
-        padding: 4px 6px;
-        font-size: 12px;
-        font-family: monospace;
-        text-transform: lowercase;
-        outline: none;
-    `;
+    hexInput.style.cssText = `flex: 1; background: var(--SmartThemeBlurTintColor, #222); color: var(--SmartThemeBodyColor, #eee); border: 1px solid var(--SmartThemeBorderColor, #555); border-radius: 4px; padding: 4px 6px; font-size: 12px; font-family: monospace; text-transform: lowercase; outline: none;`;
     hexInput.addEventListener('input', () => {
         let val = hexInput.value.trim();
         if (!val.startsWith('#')) val = '#' + val;
@@ -338,14 +257,10 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         if (e.key === 'Enter') {
             let val = hexInput.value.trim();
             if (!val.startsWith('#')) val = '#' + val;
-            if (isValidHex(val)) {
-                onSelect(val);
-                closeColorPicker();
-            }
+            if (isValidHex(val)) { onSelect(val); closeColorPicker(); }
         }
     });
     bottomRow.appendChild(hexInput);
-
     const confirmBtn = document.createElement('button');
     confirmBtn.textContent = '✓';
     confirmBtn.className = 'menu_button';
@@ -353,54 +268,97 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
     confirmBtn.addEventListener('click', () => {
         let val = hexInput.value.trim();
         if (!val.startsWith('#')) val = '#' + val;
-        if (isValidHex(val)) {
-            onSelect(val);
-            closeColorPicker();
-        }
+        if (isValidHex(val)) { onSelect(val); closeColorPicker(); }
     });
     bottomRow.appendChild(confirmBtn);
-
     popup.appendChild(bottomRow);
-
-    // ---- Återställ-knapp ----
     if (onReset) {
         const resetBtn = document.createElement('button');
         resetBtn.textContent = '↺ Återställ till Default';
         resetBtn.className = 'menu_button';
         resetBtn.style.cssText = 'width: 100%; margin-top: 8px; font-size: 12px; padding: 4px;';
-        resetBtn.addEventListener('click', () => {
-            onReset();
-            closeColorPicker();
-        });
+        resetBtn.addEventListener('click', () => { onReset(); closeColorPicker(); });
         popup.appendChild(resetBtn);
     }
-
-    // ---- Positionera popup ----
     document.body.appendChild(popup);
     activeColorPicker = popup;
-
     const rect = anchorEl.getBoundingClientRect();
     const popupRect = popup.getBoundingClientRect();
     let left = rect.left;
     let top = rect.bottom + 4;
-
-    // Håll inom skärmen
-    if (left + popupRect.width > window.innerWidth - 8) {
-        left = window.innerWidth - popupRect.width - 8;
-    }
+    if (left + popupRect.width > window.innerWidth - 8) left = window.innerWidth - popupRect.width - 8;
     if (left < 8) left = 8;
     if (top + popupRect.height > window.innerHeight - 8) {
         top = rect.top - popupRect.height - 4;
         if (top < 8) top = 8;
     }
-
     popup.style.left = `${left}px`;
     popup.style.top = `${top}px`;
+    setTimeout(() => document.addEventListener("mousedown", onColorPickerOutsideClick, true), 0);
+}
 
-    // Stäng vid klick utanför
-    setTimeout(() => {
-        document.addEventListener("mousedown", onColorPickerOutsideClick, true);
-    }, 0);
+// ---------- Skapa färgknapp ----------
+function createColorButton(currentColor, onSelect, onReset) {
+    const btn = document.createElement('div');
+    btn.className = 'wnc-color-trigger';
+    btn.style.cssText = `
+        width: 28px;
+        height: 28px;
+        min-width: 28px;
+        min-height: 28px;
+        border-radius: 6px;
+        background: ${currentColor};
+        border: 2px solid rgba(255,255,255,0.3);
+        cursor: pointer;
+        flex-shrink: 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        transition: transform 0.1s, box-shadow 0.1s;
+    `;
+    btn.addEventListener('mouseenter', () => {
+        btn.style.transform = 'scale(1.15)';
+        btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.6)';
+    });
+    btn.addEventListener('mouseleave', () => {
+        btn.style.transform = 'scale(1)';
+        btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.4)';
+    });
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const bgColor = btn.style.backgroundColor || btn.style.background || currentColor;
+        const hexColor = bgColor.startsWith('rgb') ? rgbToHex(bgColor) : (bgColor.startsWith('#') ? bgColor : currentColor);
+        openColorPicker(btn, hexColor,
+            (newColor) => {
+                btn.style.background = newColor;
+                btn.style.backgroundColor = newColor;
+                onSelect(newColor);
+            },
+            () => {
+                btn.style.background = settings.defaultColor;
+                btn.style.backgroundColor = settings.defaultColor;
+                onReset();
+            }
+        );
+    });
+    btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        btn.style.background = settings.defaultColor;
+        btn.style.backgroundColor = settings.defaultColor;
+        onReset();
+    });
+    let touchTimer = null;
+    btn.addEventListener('touchstart', (e) => {
+        touchTimer = setTimeout(() => {
+            e.preventDefault();
+            btn.style.background = settings.defaultColor;
+            btn.style.backgroundColor = settings.defaultColor;
+            onReset();
+        }, 600);
+    });
+    btn.addEventListener('touchend', () => clearTimeout(touchTimer));
+    btn.addEventListener('touchmove', () => clearTimeout(touchTimer));
+    return btn;
 }
 
 // ---------- Kärnlogik ----------
@@ -411,27 +369,17 @@ async function buildFromWorldInfo() {
             nameToColor.clear();
             nameToEntryId.clear();
             const names = [];
-
             for (const bookName of settings.bookNames) {
                 const data = await loadBook(bookName);
                 if (!data?.entries) continue;
-
                 for (const entry of Object.values(data.entries)) {
                     if (entry.disable) continue;
-
                     const allKeys = [...(entry.key ?? []), ...(entry.keysecondary ?? [])]
-                        .map(k => String(k).trim())
-                        .filter(Boolean);
-
+                        .map(k => String(k).trim()).filter(Boolean);
                     if (allKeys.length === 0) continue;
-
                     const entryId = `${bookName}::${entry.uid}`;
-
                     for (const key of allKeys) {
-                        const namesToAdd = isPlainKey(key)
-                            ? [key]
-                            : extractNamesFromRegexKey(key);
-
+                        const namesToAdd = isPlainKey(key) ? [key] : extractNamesFromRegexKey(key);
                         for (const name of namesToAdd) {
                             const lower = name.toLowerCase();
                             if (nameToColor.has(lower)) continue;
@@ -442,13 +390,11 @@ async function buildFromWorldInfo() {
                     }
                 }
             }
-
             if (names.length === 0) {
                 masterRegex = null;
                 console.log("[WI Name Colorizer] Inga namn hittades.");
                 return;
             }
-
             const sorted = [...names].sort((a, b) => b.length - a.length);
             const escaped = sorted.map(escapeRegex);
             masterRegex = new RegExp(
@@ -460,64 +406,45 @@ async function buildFromWorldInfo() {
             console.error("[WI Name Colorizer] Fel:", err);
         }
     })();
-
-    try {
-        await buildPromise;
-    } finally {
-        buildPromise = null;
-    }
+    try { await buildPromise; } finally { buildPromise = null; }
 }
 
 function getColor(name) {
     const lower = String(name).toLowerCase();
     const entryId = nameToEntryId.get(lower);
-    if (entryId && settings.entryColors[entryId]) {
-        return settings.entryColors[entryId];
-    }
+    if (entryId && settings.entryColors[entryId]) return settings.entryColors[entryId];
     return nameToColor.get(lower) || settings.defaultColor;
 }
 
 // ---------- Säker färgläggning ----------
 function colorizeElement(el) {
     if (!el || !masterRegex || !settings.enabled) return;
-
     el.querySelectorAll("span[data-wi-color]").forEach(span => {
         span.replaceWith(document.createTextNode(span.textContent));
     });
     el.normalize();
-
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
             const parent = node.parentElement;
             if (!parent) return NodeFilter.FILTER_REJECT;
             const tag = parent.tagName;
-            if (["SCRIPT", "STYLE", "CODE", "PRE", "A"].includes(tag)) {
-                return NodeFilter.FILTER_REJECT;
-            }
-            if (tag === "SPAN") {
-                return NodeFilter.FILTER_REJECT;
-            }
-            if (parent.closest("span:not([data-wi-color])")) {
-                return NodeFilter.FILTER_REJECT;
-            }
+            if (["SCRIPT", "STYLE", "CODE", "PRE", "A"].includes(tag)) return NodeFilter.FILTER_REJECT;
+            if (tag === "SPAN") return NodeFilter.FILTER_REJECT;
+            if (parent.closest("span:not([data-wi-color])")) return NodeFilter.FILTER_REJECT;
             return NodeFilter.FILTER_ACCEPT;
         },
     });
-
     const textNodes = [];
     let node;
     while ((node = walker.nextNode())) textNodes.push(node);
-
     for (const textNode of textNodes) {
         const text = textNode.nodeValue;
         masterRegex.lastIndex = 0;
         if (!masterRegex.test(text)) continue;
         masterRegex.lastIndex = 0;
-
         const frag = document.createDocumentFragment();
         let lastIndex = 0;
         let match;
-
         while ((match = masterRegex.exec(text))) {
             const [full, name] = match;
             if (match.index > lastIndex) {
@@ -545,139 +472,109 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
-// ---------- Skapa färgknapp (används både i WI-editor och settings-panel) ----------
-function createColorButton(currentColor, onSelect, onReset, opts = {}) {
-    const btn = document.createElement('div');
-    btn.className = 'wnc-color-trigger';
-    btn.style.cssText = `
-        width: ${opts.width || '28px'};
-        height: ${opts.height || '24px'};
-        border-radius: 4px;
-        background: ${currentColor};
-        border: 1px solid var(--SmartThemeBorderColor, #666);
-        cursor: pointer;
-        flex-shrink: 0;
-        position: relative;
-        transition: transform 0.1s;
-    `;
-
-    btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.1)'; });
-    btn.addEventListener('mouseleave', () => { btn.style.transform = 'scale(1)'; });
-
-    btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openColorPicker(btn, btn.style.backgroundColor.startsWith('rgb') 
-            ? rgbToHex(btn.style.backgroundColor) 
-            : btn.style.background || currentColor,
-        (newColor) => {
-            btn.style.background = newColor;
-            onSelect(newColor);
-        },
-        () => {
-            btn.style.background = settings.defaultColor;
-            onReset();
-        });
-    });
-
-    // Högerklicka = återställ
-    btn.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        btn.style.background = settings.defaultColor;
-        onReset();
-    });
-
-    // Long-press på mobil = återställ
-    let touchTimer = null;
-    btn.addEventListener('touchstart', () => {
-        touchTimer = setTimeout(() => {
-            btn.style.background = settings.defaultColor;
-            onReset();
-        }, 600);
-    });
-    btn.addEventListener('touchend', () => { clearTimeout(touchTimer); });
-    btn.addEventListener('touchmove', () => { clearTimeout(touchTimer); });
-
-    return btn;
-}
-
-function rgbToHex(rgb) {
-    const m = rgb.match(/\d+/g);
-    if (!m || m.length < 3) return '#ffffff';
-    return '#' + m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
-}
-
 // ---------- WI Editor: Injecta färgknappar ----------
 let wiEditorObserver = null;
 let wiPopupObserver = null;
 
 function getCurrentEditorBookName() {
+    // Försök flera sätt att hitta boknamnet
     const select = document.getElementById('world_editor_select');
-    if (!select) return null;
-    const selected = select.options[select.selectedIndex];
-    return selected ? selected.text : null;
-}
-
-function getEntryUid(entryEl) {
-    const uid = entryEl.getAttribute('uid');
-    if (uid !== null) return uid;
-
-    const uidData = entryEl.dataset.uid;
-    if (uidData !== undefined) return uidData;
-
-    const parent = entryEl.closest('.world_entry[uid]') || entryEl.closest('[uid]');
-    if (parent) return parent.getAttribute('uid');
-
+    if (select && select.selectedIndex >= 0) {
+        const selected = select.options[select.selectedIndex];
+        if (selected) return selected.text || selected.value;
+    }
+    // Alternativ: leta efter en header/titel
+    const header = document.querySelector('#world_popup_title') || document.querySelector('.world_info_editor_title');
+    if (header) return header.textContent.trim();
     return null;
 }
 
+function getEntryUid(entryEl) {
+    // Försök flera sätt att hitta uid
+    const uid = entryEl.getAttribute('uid');
+    if (uid !== null && uid !== '') return uid;
+    const uidData = entryEl.dataset?.uid;
+    if (uidData !== undefined && uidData !== '') return uidData;
+    const parent = entryEl.closest('[uid]') || entryEl.closest('.world_entry[uid]');
+    if (parent) {
+        const pUid = parent.getAttribute('uid');
+        if (pUid !== null && pUid !== '') return pUid;
+    }
+    // Leta efter dolt input-fält med uid
+    const uidInput = entryEl.querySelector('input[name="uid"], [data-uid]');
+    if (uidInput) {
+        const val = uidInput.value || uidInput.dataset.uid;
+        if (val) return val;
+    }
+    return null;
+}
+
+function findInjectionTarget(entryEl) {
+    // Försök flera möjliga containrar i prioritetsordning
+    const selectors = [
+        '.WIEnteryHeaderControls',  // STs befintliga (med "typo")
+        '.WIEntryHeaderControls',   // om de fixat stavfelet
+        '.world_entry_header_controls',
+        '.entry_header_controls',
+    ];
+    for (const sel of selectors) {
+        const el = entryEl.querySelector(sel);
+        if (el) return el;
+    }
+    // Försök bredvid state selector
+    const stateSelector = entryEl.querySelector('select[name="entryStateSelector"]');
+    if (stateSelector?.parentElement) return stateSelector.parentElement;
+    // Försök bredvid comment/memo fältet
+    const commentField = entryEl.querySelector('textarea[name="comment"]');
+    if (commentField?.parentElement) return commentField.parentElement;
+    // Försök hitta första flex-container
+    const flexContainer = entryEl.querySelector('.flex-container, .flex');
+    if (flexContainer) return flexContainer;
+    // Sista utväg: entry-elementet själv
+    return entryEl;
+}
+
 function injectColorPickerIntoEntry(entryEl) {
-    if (!entryEl || entryEl.querySelector('.wnc-entry-color-wrapper')) return;
+    if (!entryEl) return false;
+    // Hoppa över om redan injicerad
+    if (entryEl.querySelector('.wnc-entry-color-wrapper')) return false;
 
     const uid = getEntryUid(entryEl);
-    if (uid === null || uid === undefined || uid === '') return;
+    if (uid === null || uid === undefined || uid === '') {
+        return false;
+    }
 
     const bookName = getCurrentEditorBookName();
-    if (!bookName) return;
+    if (!bookName) return false;
 
     const entryId = `${bookName}::${uid}`;
     const currentColor = settings.entryColors[entryId] || settings.defaultColor;
 
-    let targetContainer =
-        entryEl.querySelector('.WIEnteryHeaderControls') ||
-        entryEl.querySelector('.WIEntryHeaderControls');
-
-    if (!targetContainer) {
-        const stateSelector = entryEl.querySelector('select[name="entryStateSelector"]');
-        if (stateSelector?.parentElement) {
-            targetContainer = stateSelector.parentElement;
-        }
-    }
-
-    if (!targetContainer) {
-        const commentField = entryEl.querySelector('textarea[name="comment"]');
-        if (commentField?.parentElement) {
-            targetContainer = commentField.parentElement;
-        }
-    }
-
-    if (!targetContainer) return;
+    const targetContainer = findInjectionTarget(entryEl);
+    if (!targetContainer) return false;
 
     const wrapper = document.createElement('div');
     wrapper.className = 'wnc-entry-color-wrapper';
-    wrapper.style.cssText = 'display:flex; align-items:center; gap:4px; margin-left:4px;';
+    wrapper.style.cssText = `
+        display: flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        margin-left: 6px !important;
+        flex-shrink: 0 !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    `;
 
     const label = document.createElement('span');
     label.textContent = '🎨';
-    label.title = 'Färg för namn i chatten';
-    label.style.cssText = 'font-size:0.9em; cursor:help;';
+    label.title = 'Färg för namn i chatten (klicka = välj, högerklicka = återställ)';
+    label.style.cssText = 'font-size: 1em; cursor: help; flex-shrink: 0;';
 
-    const colorBtn = createColorButton(currentColor,
+    const colorBtn = createColorButton(
+        currentColor,
         (newColor) => {
             settings.entryColors[entryId] = newColor;
             saveSettingsDebounced();
-
             if (!settings.bookNames.includes(bookName)) {
                 settings.bookNames.push(bookName);
                 saveSettingsDebounced();
@@ -699,62 +596,75 @@ function injectColorPickerIntoEntry(entryEl) {
     wrapper.appendChild(label);
     wrapper.appendChild(colorBtn);
     targetContainer.appendChild(wrapper);
+    return true;
 }
 
 function scanAndInjectColorPickers() {
-    const entries = document.querySelectorAll('#world_popup_entries_list .world_entry');
-    entries.forEach(injectColorPickerIntoEntry);
+    // Skanna ALLA world_entry-element i hela dokumentet
+    // (både i popup och i drawer)
+    const allEntries = document.querySelectorAll('.world_entry');
+    let injected = 0;
+    allEntries.forEach(entry => {
+        if (injectColorPickerIntoEntry(entry)) injected++;
+    });
+    if (injected > 0) {
+        console.log(`[WI Name Colorizer] Injicerade färgknappar i ${injected} entries.`);
+    }
 }
 
 function setupWIEditorObserver() {
-    const list = document.getElementById('world_popup_entries_list');
-    if (!list) return false;
+    // Hitta entries-listan – prova flera ID:n
+    const list = document.getElementById('world_popup_entries_list')
+        || document.getElementById('world_editor_entries')
+        || document.querySelector('.world_info_entries_list')
+        || document.querySelector('#WorldInfo .world_info_entries');
 
-    if (wiEditorObserver) wiEditorObserver.disconnect();
-
-    const debouncedScan = debounce(scanAndInjectColorPickers, 200);
-
-    wiEditorObserver = new MutationObserver(debouncedScan);
-    wiEditorObserver.observe(list, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['uid']
-    });
-
-    scanAndInjectColorPickers();
-    return true;
+    if (list) {
+        if (wiEditorObserver) wiEditorObserver.disconnect();
+        const debouncedScan = debounce(scanAndInjectColorPickers, 200);
+        wiEditorObserver = new MutationObserver(debouncedScan);
+        wiEditorObserver.observe(list, {
+            childList: true,
+            subtree: true,
+        });
+        scanAndInjectColorPickers();
+        return true;
+    }
+    return false;
 }
 
 function setupWIPopupObserver() {
     if (wiPopupObserver) wiPopupObserver.disconnect();
-
     wiPopupObserver = new MutationObserver(debounce(() => {
-        const list = document.getElementById('world_popup_entries_list');
-        if (list && list.children.length > 0) {
-            if (!wiEditorObserver) {
+        // Kolla om WI-editorn är öppen
+        const hasEntries = document.querySelector('.world_entry');
+        const wiVisible = document.querySelector('#WorldInfo:not([style*="display: none"])')
+            || document.querySelector('#world_popup[style*="display: flex"]')
+            || document.querySelector('#world_popup:not([style*="display: none"])');
+
+        if (hasEntries && wiVisible) {
+            // Försök sätta upp editor-observer om inte redan gjort
+            if (!wiEditorObserver || !wiEditorObserver.isConnected) {
                 setupWIEditorObserver();
             }
+            // Skanna direkt också
+            scanAndInjectColorPickers();
         }
     }, 300));
-
     wiPopupObserver.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
     });
 }
 
 function updateBooksInputField() {
     const input = document.getElementById('wnc_books');
-    if (input) {
-        input.value = settings.bookNames.join(', ');
-    }
+    if (input) input.value = settings.bookNames.join(', ');
 }
 
 // ---------- Settings-panel ----------
 function injectSettingsPanel() {
     if (document.getElementById("wnc_panel")) return;
-
     const panel = document.createElement("div");
     panel.id = "wnc_panel";
     panel.innerHTML = `
@@ -768,33 +678,30 @@ function injectSettingsPanel() {
                     <input type="checkbox" id="wnc_enabled" ${settings.enabled ? "checked" : ""}>
                     Aktivera färgläggning
                 </label>
-
                 <label>World Info-böcker (kommaseparerat)</label>
                 <input type="text" id="wnc_books" class="text_pole" value="${settings.bookNames.join(", ")}">
-
                 <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
                     <label style="flex:1;">Default-färg</label>
                     <div id="wnc_default_color_holder"></div>
                 </div>
-
                 <button id="wnc_rebuild" class="menu_button" style="margin-top:8px;">Bygg om från World Info</button>
-
+                <button id="wnc_rescan" class="menu_button" style="margin-top:4px;">Skanna WI-editor igen</button>
                 <div style="margin-top:8px; padding:6px; border-radius:6px; border:1px solid var(--SmartThemeBorderColor); font-size:0.85em; opacity:0.8;">
                     💡 Färgknappar finns direkt i WI-editorn bredvid varje entry.<br>
                     Klicka på 🎨 för att öppna color pickern.<br>
                     Högerklicka / long-press = återställ till Default.<br>
-                    Böcker läggs till automatiskt när du sätter en färg.
+                    Böcker läggs till automatiskt när du sätter en färg.<br><br>
+                    <b>Om knappen inte syns:</b> Klicka på "Skanna WI-editor igen".
                 </div>
             </div>
         </div>
     `;
-
     const target = document.querySelector("#extensions_settings2") || document.querySelector("#extensions_settings");
     if (target) target.appendChild(panel);
 
-    // Default color button
     const defaultColorHolder = document.getElementById('wnc_default_color_holder');
-    const defaultColorBtn = createColorButton(settings.defaultColor,
+    const defaultColorBtn = createColorButton(
+        settings.defaultColor,
         (newColor) => {
             settings.defaultColor = newColor;
             saveSettingsDebounced();
@@ -802,7 +709,7 @@ function injectSettingsPanel() {
                 nameToColor.set(key, settings.defaultColor);
             }
             colorizeAllVisible();
-            // Uppdatera alla knappar i WI-editorn som inte har egen färg
+            // Uppdatera alla WI-knappar utan egen färg
             document.querySelectorAll('.wnc-entry-color-wrapper').forEach(wrapper => {
                 const entryEl = wrapper.closest('.world_entry');
                 const uid = getEntryUid(entryEl);
@@ -811,21 +718,23 @@ function injectSettingsPanel() {
                     const entryId = `${bookName}::${uid}`;
                     if (!settings.entryColors[entryId]) {
                         const btn = wrapper.querySelector('.wnc-color-trigger');
-                        if (btn) btn.style.background = settings.defaultColor;
+                        if (btn) {
+                            btn.style.background = settings.defaultColor;
+                            btn.style.backgroundColor = settings.defaultColor;
+                        }
                     }
                 }
             });
         },
-        () => {} // ingen reset för default
+        () => {}
     );
     defaultColorHolder.appendChild(defaultColorBtn);
 
     document.getElementById("wnc_enabled")?.addEventListener("change", (e) => {
         settings.enabled = e.target.checked;
         saveSettingsDebounced();
-        if (settings.enabled) {
-            colorizeAllVisible();
-        } else {
+        if (settings.enabled) colorizeAllVisible();
+        else {
             document.querySelectorAll("#chat span[data-wi-color]").forEach(span => {
                 span.replaceWith(document.createTextNode(span.textContent));
             });
@@ -843,6 +752,10 @@ function injectSettingsPanel() {
         colorizeAllVisible();
         scanAndInjectColorPickers();
     });
+
+    document.getElementById("wnc_rescan")?.addEventListener("click", () => {
+        scanAndInjectColorPickers();
+    });
 }
 
 // ---------- Chat-observer ----------
@@ -850,13 +763,11 @@ let chatObserver = null;
 function setupChatObserver() {
     const chat = document.getElementById("chat");
     if (!chat) return;
-
     const debouncedRecolor = debounce(() => {
         chatObserver?.disconnect();
         colorizeAllVisible();
         chatObserver?.observe(chat, { childList: true, subtree: true, characterData: true });
     }, 250);
-
     chatObserver = new MutationObserver(debouncedRecolor);
     chatObserver.observe(chat, { childList: true, subtree: true, characterData: true });
 }
@@ -890,3 +801,11 @@ buildFromWorldInfo().then(() => {
     colorizeAllVisible();
     scanAndInjectColorPickers();
 });
+
+// Skanna periodiskt som back-up (var 2:e sekund i 30 sekunder efter start)
+let backupScanCount = 0;
+const backupScanInterval = setInterval(() => {
+    scanAndInjectColorPickers();
+    backupScanCount++;
+    if (backupScanCount >= 15) clearInterval(backupScanInterval);
+}, 2000);
