@@ -149,55 +149,39 @@ const PRESET_COLORS = [
 ];
 
 let activeColorPicker = null;
-let activeColorPickerWI = null;
+
+// ---- Capture-phase interceptor (hindrar ST att stänga WI-popupen) ----
+const INTERCEPT_EVENTS = ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel', 'dblclick', 'contextmenu'];
+
+function colorPickerInterceptor(e) {
+    if (!activeColorPicker) return;
+    // Om klicket är inuti vår picker → stoppa propagation innan ST hinner se det
+    if (activeColorPicker.contains(e.target)) {
+        e.stopPropagation();
+        return;
+    }
+    // Om klicket är på en trigger-knapp → stoppa också
+    if (e.target.closest && e.target.closest('.wnc-color-trigger')) {
+        e.stopPropagation();
+        return;
+    }
+    // Om klicket är utanför pickern → stäng pickern
+    // (men låt eventet fortsätta så ST kan stänga WI om det är utanför WI också)
+    if (!e.target.closest || !e.target.closest('.wnc-color-picker-popup')) {
+        closeColorPicker();
+    }
+}
+
+// Registrera interceptorn EN gång, i capture-phase (före STs egna listeners)
+INTERCEPT_EVENTS.forEach(evt => {
+    document.addEventListener(evt, colorPickerInterceptor, true);
+});
 
 function closeColorPicker() {
     if (activeColorPicker) {
         activeColorPicker.remove();
         activeColorPicker = null;
-        activeColorPickerWI = null;
-        document.removeEventListener("mousedown", onColorPickerOutsideClick, true);
     }
-}
-
-function onColorPickerOutsideClick(e) {
-    if (!activeColorPicker) return;
-    const isInsidePicker = activeColorPicker.contains(e.target);
-    const isTrigger = e.target.classList && e.target.classList.contains('wnc-color-trigger');
-    const isInsideWI = activeColorPickerWI && activeColorPickerWI.contains(e.target);
-    if (!isInsidePicker && !isTrigger && !isInsideWI) {
-        closeColorPicker();
-    }
-}
-
-function findWIPopupContainer(el) {
-    const candidates = [
-        '#world_popup',
-        '#WorldInfo',
-        '#world_editor',
-        '#world_editor_popup',
-        '.world_info_popup',
-        '#dialogue_popup',
-        '.dialogue_popup',
-    ];
-    for (const sel of candidates) {
-        const found = el.closest(sel);
-        if (found) return found;
-    }
-    // Fallback: leta uppåt efter en stor popup-liknande container
-    let cur = el;
-    while (cur && cur !== document.body) {
-        if (cur.classList && (
-            (cur.id && cur.id.toLowerCase().includes('world')) ||
-            (cur.id && cur.id.toLowerCase().includes('popup')) ||
-            cur.classList.contains('popup')
-        )) {
-            const rect = cur.getBoundingClientRect();
-            if (rect.width > 300 && rect.height > 200) return cur;
-        }
-        cur = cur.parentElement;
-    }
-    return null;
 }
 
 function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
@@ -206,21 +190,14 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
     const popup = document.createElement('div');
     popup.className = 'wnc-color-picker-popup';
     popup.style.cssText = `
-        position: fixed; z-index: 100000;
+        position: fixed; z-index: 999999;
         background: var(--SmartThemeBlurTintColor, #1a1a2e);
         border: 1px solid var(--SmartThemeBorderColor, #555);
         border-radius: 8px; padding: 10px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.7);
         width: 240px; font-size: 13px;
         color: var(--SmartThemeBodyColor, #eee);
     `;
-
-    // ---- STOPPA propagation så WI-popupen inte stängs ----
-    const stopEvents = ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel', 'dblclick'];
-    stopEvents.forEach(evt => {
-        popup.addEventListener(evt, (e) => { e.stopPropagation(); }, true);
-        popup.addEventListener(evt, (e) => { e.stopPropagation(); }, false);
-    });
 
     // Palett
     const paletteSection = document.createElement('div');
@@ -244,6 +221,8 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
     const sliderContainer = document.createElement('div');
     sliderContainer.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
 
+    let hexInput, preview;
+
     function makeSlider(label, max, getValue, onChange, gradient) {
         const row = document.createElement('div');
         row.style.cssText = 'display: flex; align-items: center; gap: 6px;';
@@ -263,8 +242,6 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
             hexInput.value = newColor;
             preview.style.background = newColor;
         });
-        slider.addEventListener('mousedown', (e) => e.stopPropagation());
-        slider.addEventListener('touchstart', (e) => e.stopPropagation());
         row.appendChild(slider);
         return { row, slider };
     }
@@ -291,11 +268,11 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
     // Hex + preview
     const bottomRow = document.createElement('div');
     bottomRow.style.cssText = 'display: flex; align-items: center; gap: 6px;';
-    const preview = document.createElement('div');
+    preview = document.createElement('div');
     preview.style.cssText = `width: 28px; height: 28px; border-radius: 4px; background: ${currentColor}; border: 1px solid rgba(255,255,255,0.2); flex-shrink: 0;`;
     bottomRow.appendChild(preview);
 
-    const hexInput = document.createElement('input');
+    hexInput = document.createElement('input');
     hexInput.type = 'text';
     hexInput.value = currentColor;
     hexInput.maxLength = 7;
@@ -321,7 +298,6 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
             if (isValidHex(val)) { onSelect(val); closeColorPicker(); }
         }
     });
-    hexInput.addEventListener('mousedown', (e) => e.stopPropagation());
     bottomRow.appendChild(hexInput);
 
     const confirmBtn = document.createElement('button');
@@ -346,29 +322,34 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         popup.appendChild(resetBtn);
     }
 
-    // ---- Placera popupen INUTI WI-popupen om möjligt ----
-    const wiPopup = findWIPopupContainer(anchorEl);
-    activeColorPickerWI = wiPopup;
-    const appendTarget = wiPopup || document.body;
-    appendTarget.appendChild(popup);
+    // ---- Append till body (inte inuti WI-popupen) ----
+    // Detta säkerställer korrekt positionering med position: fixed
+    document.body.appendChild(popup);
     activeColorPicker = popup;
 
-    // Positionera (fixed = relativt viewport oavsett förälder)
+    // ---- Positionera relativt viewport (fungerar nu korrekt) ----
     const rect = anchorEl.getBoundingClientRect();
-    const popupRect = popup.getBoundingClientRect();
-    let left = rect.left;
-    let top = rect.bottom + 4;
-    if (left + popupRect.width > window.innerWidth - 8) left = window.innerWidth - popupRect.width - 8;
-    if (left < 8) left = 8;
-    if (top + popupRect.height > window.innerHeight - 8) {
-        top = rect.top - popupRect.height - 4;
-        if (top < 8) top = 8;
-    }
-    popup.style.left = `${left}px`;
-    popup.style.top = `${top}px`;
+    // Vänta en frame så popupen har renderats innan vi mäter
+    requestAnimationFrame(() => {
+        const popupRect = popup.getBoundingClientRect();
+        let left = rect.left;
+        let top = rect.bottom + 4;
 
-    // Stäng vid klick utanför pickern OCH utanför WI-popupen
-    setTimeout(() => document.addEventListener("mousedown", onColorPickerOutsideClick, true), 0);
+        // Justera horisontellt
+        if (left + popupRect.width > window.innerWidth - 8) {
+            left = rect.right - popupRect.width;
+        }
+        if (left < 8) left = 8;
+
+        // Justera vertikalt
+        if (top + popupRect.height > window.innerHeight - 8) {
+            top = rect.top - popupRect.height - 4;
+        }
+        if (top < 8) top = 8;
+
+        popup.style.left = `${left}px`;
+        popup.style.top = `${top}px`;
+    });
 }
 
 // ---------- Skapa färgknapp ----------
