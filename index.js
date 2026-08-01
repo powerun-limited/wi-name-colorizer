@@ -52,12 +52,9 @@ function extractColorFromComment(comment) {
 }
 
 function getEntryColor(entry) {
-    // 1. Sparad färg från färgknappen
-    if (entry.extensions?.wiNameColor) return entry.extensions.wiNameColor;
-    // 2. Hex i Title/Memo
+    // Hex i Title/Memo har högst prioritet
     const fromComment = extractColorFromComment(entry.comment);
     if (fromComment) return fromComment;
-    // 3. Standard
     return settings.defaultColor;
 }
 
@@ -95,18 +92,6 @@ async function loadBook(name) {
     } catch (err) {
         console.error(`[WI Name Colorizer] Fel vid hämtning av "${name}":`, err);
         return null;
-    }
-}
-
-async function saveBook(name, data) {
-    try {
-        await fetch("/api/worldinfo/edit", {
-            method: "POST",
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ name, data }),
-        });
-    } catch (err) {
-        console.error(`[WI Name Colorizer] Kunde inte spara boken "${name}":`, err);
     }
 }
 
@@ -242,7 +227,7 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
-// ---------- Färgknapp i World Info-editorn ----------
+// ---------- Färgknapp i World Info (skriver hex i Title/Memo) ----------
 
 function createColorPicker(currentColor, onChange) {
     const wrapper = document.createElement("div");
@@ -266,27 +251,29 @@ function createColorPicker(currentColor, onChange) {
     return wrapper;
 }
 
-async function handleColorChange(bookName, uid, newColor) {
-    console.log(`[WI Name Colorizer] Sparar färg ${newColor} på UID \( {uid} i " \){bookName}"`);
+function handleColorChange(textarea, newColor) {
+    // Ta bort eventuell gammal hex-kod
+    let value = textarea.value || "";
+    value = value.replace(/\s*#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g, "").trim();
 
-    const data = await loadBook(bookName);
-    if (!data?.entries) return;
-
-    let entry = data.entries[uid] || data.entries[String(uid)] || data.entries[Number(uid)];
-    if (!entry) {
-        console.warn("[WI Name Colorizer] Hittade inte entry", uid);
-        return;
+    // Lägg den nya färgen i slutet
+    if (value) {
+        value = value + " " + newColor;
+    } else {
+        value = newColor;
     }
 
-    if (!entry.extensions) entry.extensions = {};
-    entry.extensions.wiNameColor = newColor;
-    data.entries[entry.uid ?? uid] = entry;
+    textarea.value = value;
 
-    await saveBook(bookName, data);
-    console.log(`[WI Name Colorizer] Sparat.`);
+    // Trigga SillyTaverns egen sparning
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    textarea.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await buildFromWorldInfo();
-    colorizeAllVisible();
+    // Bygg om efter en kort stund
+    setTimeout(async () => {
+        await buildFromWorldInfo();
+        colorizeAllVisible();
+    }, 700);
 }
 
 function injectColorPickers() {
@@ -295,35 +282,18 @@ function injectColorPickers() {
 
     fields.forEach(textarea => {
         if (textarea.dataset.wiColorInjected) return;
-
-        const entryEl = textarea.closest(".world_entry");
-        if (!entryEl) return;
-
-        const uid = entryEl.getAttribute("uid") || entryEl.dataset.uid;
-        if (!uid) return;
-
-        const bookSelect = document.querySelector("#world_editor_select");
-        const bookName = bookSelect?.value || settings.bookNames[0];
-        if (!bookName) return;
-
         textarea.dataset.wiColorInjected = "1";
         injected++;
 
-        const picker = createColorPicker(settings.defaultColor, (newColor) => {
-            handleColorChange(bookName, uid, newColor);
+        // Hämta nuvarande färg från fältet
+        const currentMatch = (textarea.value || "").match(/#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/);
+        const currentColor = currentMatch ? `#${currentMatch[1]}` : settings.defaultColor;
+
+        const picker = createColorPicker(currentColor, (newColor) => {
+            handleColorChange(textarea, newColor);
         });
 
         textarea.parentNode.insertBefore(picker, textarea.nextSibling);
-
-        // Sätt rätt färg i efterhand
-        loadBook(bookName).then(data => {
-            const entry = data?.entries?.[uid] || data?.entries?.[String(uid)] || data?.entries?.[Number(uid)];
-            if (entry) {
-                const color = getEntryColor(entry);
-                const input = picker.querySelector('input[type="color"]');
-                if (input) input.value = color;
-            }
-        });
     });
 
     if (injected > 0) {
@@ -342,7 +312,7 @@ function startWiObserver() {
     observer.observe(document.body, { childList: true, subtree: true });
 }
 
-// ---------- Enkel settings-panel (ingen jättelista) ----------
+// ---------- Enkel settings-panel ----------
 
 function injectSettingsPanel() {
     if (document.getElementById("wnc_panel")) return;
