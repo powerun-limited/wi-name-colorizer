@@ -6,7 +6,7 @@ const defaultSettings = {
     enabled: true,
     bookNames: ["MGOT", "GOTLB"],
     defaultColor: "#ffd700",
-    entryColors: {}, // { "bokNamn::uid": "#rrggbb" }
+    entryColors: {},
 };
 // =====================================================
 
@@ -80,6 +80,327 @@ async function loadBook(name) {
         console.error(`[WI Name Colorizer] Fel vid hämtning av "${name}":`, err);
         return null;
     }
+}
+
+// ---------- Färgkonvertering ----------
+function hexToHsl(hex) {
+    let r = parseInt(hex.slice(1, 3), 16) / 255;
+    let g = parseInt(hex.slice(3, 5), 16) / 255;
+    let b = parseInt(hex.slice(5, 7), 16) / 255;
+
+    let max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+
+    if (max === min) {
+        h = s = 0;
+    } else {
+        let d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
+            case g: h = ((b - r) / d + 2); break;
+            case b: h = ((r - g) / d + 4); break;
+        }
+        h /= 6;
+    }
+    return [Math.round(h * 360), Math.round(s * 100), Math.round(l * 100)];
+}
+
+function hslToHex(h, s, l) {
+    h = h / 360;
+    s = s / 100;
+    l = l / 100;
+
+    let r, g, b;
+    if (s === 0) {
+        r = g = b = l;
+    } else {
+        const hue2rgb = (p, q, t) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+        };
+        let q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        let p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1/3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1/3);
+    }
+
+    const toHex = (x) => {
+        const hex = Math.round(x * 255).toString(16);
+        return hex.length === 1 ? "0" + hex : hex;
+    };
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function isValidHex(str) {
+    return /^#[0-9a-fA-F]{6}$/.test(str);
+}
+
+// ---------- Custom Color Picker ----------
+const PRESET_COLORS = [
+    "#ff4444", "#ff8800", "#ffdd00", "#88ff00",
+    "#00ff88", "#00ddff", "#0088ff", "#4400ff",
+    "#8800ff", "#ff00aa", "#ff0044", "#ff6688",
+    "#ffaa44", "#ffee88", "#aaffaa", "#44ddaa",
+    "#66ccff", "#aa88ff", "#ddaaff", "#ff88cc",
+    "#ffffff", "#cccccc", "#888888", "#444444",
+    "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71",
+    "#1abc9c", "#3498db", "#9b59b6", "#e91e63",
+];
+
+let activeColorPicker = null;
+
+function closeColorPicker() {
+    if (activeColorPicker) {
+        activeColorPicker.remove();
+        activeColorPicker = null;
+        document.removeEventListener("mousedown", onColorPickerOutsideClick, true);
+    }
+}
+
+function onColorPickerOutsideClick(e) {
+    if (activeColorPicker && !activeColorPicker.contains(e.target) && !e.target.classList.contains('wnc-color-trigger')) {
+        closeColorPicker();
+    }
+}
+
+function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
+    closeColorPicker();
+
+    const popup = document.createElement('div');
+    popup.className = 'wnc-color-picker-popup';
+    popup.style.cssText = `
+        position: fixed;
+        z-index: 100000;
+        background: var(--SmartThemeBlurTintColor, #1a1a2e);
+        border: 1px solid var(--SmartThemeBorderColor, #555);
+        border-radius: 8px;
+        padding: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        width: 240px;
+        font-size: 13px;
+        color: var(--SmartThemeBodyColor, #eee);
+    `;
+
+    // ---- Förinställd palett ----
+    const paletteSection = document.createElement('div');
+    paletteSection.style.cssText = `
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 3px;
+        margin-bottom: 10px;
+    `;
+
+    PRESET_COLORS.forEach(color => {
+        const swatch = document.createElement('div');
+        swatch.style.cssText = `
+            width: 100%;
+            aspect-ratio: 1;
+            background: ${color};
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.15);
+            transition: transform 0.1s;
+        `;
+        swatch.addEventListener('mouseenter', () => {
+            swatch.style.transform = 'scale(1.15)';
+        });
+        swatch.addEventListener('mouseleave', () => {
+            swatch.style.transform = 'scale(1)';
+        });
+        swatch.addEventListener('click', () => {
+            onSelect(color);
+            closeColorPicker();
+        });
+        paletteSection.appendChild(swatch);
+    });
+
+    popup.appendChild(paletteSection);
+
+    // ---- Separator ----
+    const sep1 = document.createElement('hr');
+    sep1.style.cssText = 'border: 0; border-top: 1px solid var(--SmartThemeBorderColor, #444); margin: 8px 0;';
+    popup.appendChild(sep1);
+
+    // ---- HSL Sliders ----
+    let [h, s, l] = hexToHsl(currentColor);
+
+    const sliderContainer = document.createElement('div');
+    sliderContainer.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
+
+    function makeSlider(label, max, getValue, onChange, gradient) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 6px;';
+
+        const lab = document.createElement('span');
+        lab.textContent = label;
+        lab.style.cssText = 'width: 12px; font-size: 11px; opacity: 0.7;';
+        row.appendChild(lab);
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0';
+        slider.max = String(max);
+        slider.value = String(getValue());
+        slider.style.cssText = `
+            flex: 1;
+            height: 16px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: ${gradient};
+            border-radius: 8px;
+            outline: none;
+            cursor: pointer;
+        `;
+        slider.addEventListener('input', () => {
+            onChange(parseInt(slider.value));
+            const newColor = hslToHex(h, s, l);
+            hexInput.value = newColor;
+            preview.style.background = newColor;
+        });
+        row.appendChild(slider);
+        return { row, slider };
+    }
+
+    // Hue slider
+    const hueGradient = 'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)';
+    const hueSlider = makeSlider('H', 360, () => h, (v) => { h = v; updateSliders(); }, hueGradient);
+
+    // Saturation slider
+    const satGradient = `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`;
+    const satSlider = makeSlider('S', 100, () => s, (v) => { s = v; updateSliders(); }, satGradient);
+
+    // Lightness slider
+    const lightGradient = `linear-gradient(to right, #000, hsl(${h},${s}%,50%), #fff)`;
+    const lightSlider = makeSlider('L', 100, () => l, (v) => { l = v; updateSliders(); }, lightGradient);
+
+    function updateSliders() {
+        satSlider.slider.style.background = `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`;
+        lightSlider.slider.style.background = `linear-gradient(to right, #000, hsl(${h},${s}%,50%), #fff)`;
+    }
+
+    sliderContainer.appendChild(hueSlider.row);
+    sliderContainer.appendChild(satSlider.row);
+    sliderContainer.appendChild(lightSlider.row);
+    popup.appendChild(sliderContainer);
+
+    // ---- Hex input + preview ----
+    const sep2 = document.createElement('hr');
+    sep2.style.cssText = 'border: 0; border-top: 1px solid var(--SmartThemeBorderColor, #444); margin: 8px 0;';
+    popup.appendChild(sep2);
+
+    const bottomRow = document.createElement('div');
+    bottomRow.style.cssText = 'display: flex; align-items: center; gap: 6px;';
+
+    const preview = document.createElement('div');
+    preview.style.cssText = `
+        width: 28px; height: 28px; border-radius: 4px;
+        background: ${currentColor};
+        border: 1px solid rgba(255,255,255,0.2);
+        flex-shrink: 0;
+    `;
+    bottomRow.appendChild(preview);
+
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.value = currentColor;
+    hexInput.maxLength = 7;
+    hexInput.style.cssText = `
+        flex: 1;
+        background: var(--SmartThemeBlurTintColor, #222);
+        color: var(--SmartThemeBodyColor, #eee);
+        border: 1px solid var(--SmartThemeBorderColor, #555);
+        border-radius: 4px;
+        padding: 4px 6px;
+        font-size: 12px;
+        font-family: monospace;
+        text-transform: lowercase;
+        outline: none;
+    `;
+    hexInput.addEventListener('input', () => {
+        let val = hexInput.value.trim();
+        if (!val.startsWith('#')) val = '#' + val;
+        if (isValidHex(val)) {
+            [h, s, l] = hexToHsl(val);
+            hueSlider.slider.value = String(h);
+            satSlider.slider.value = String(s);
+            lightSlider.slider.value = String(l);
+            updateSliders();
+            preview.style.background = val;
+        }
+    });
+    hexInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            let val = hexInput.value.trim();
+            if (!val.startsWith('#')) val = '#' + val;
+            if (isValidHex(val)) {
+                onSelect(val);
+                closeColorPicker();
+            }
+        }
+    });
+    bottomRow.appendChild(hexInput);
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.textContent = '✓';
+    confirmBtn.className = 'menu_button';
+    confirmBtn.style.cssText = 'padding: 4px 10px; font-size: 14px; flex-shrink: 0;';
+    confirmBtn.addEventListener('click', () => {
+        let val = hexInput.value.trim();
+        if (!val.startsWith('#')) val = '#' + val;
+        if (isValidHex(val)) {
+            onSelect(val);
+            closeColorPicker();
+        }
+    });
+    bottomRow.appendChild(confirmBtn);
+
+    popup.appendChild(bottomRow);
+
+    // ---- Återställ-knapp ----
+    if (onReset) {
+        const resetBtn = document.createElement('button');
+        resetBtn.textContent = '↺ Återställ till Default';
+        resetBtn.className = 'menu_button';
+        resetBtn.style.cssText = 'width: 100%; margin-top: 8px; font-size: 12px; padding: 4px;';
+        resetBtn.addEventListener('click', () => {
+            onReset();
+            closeColorPicker();
+        });
+        popup.appendChild(resetBtn);
+    }
+
+    // ---- Positionera popup ----
+    document.body.appendChild(popup);
+    activeColorPicker = popup;
+
+    const rect = anchorEl.getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    let left = rect.left;
+    let top = rect.bottom + 4;
+
+    // Håll inom skärmen
+    if (left + popupRect.width > window.innerWidth - 8) {
+        left = window.innerWidth - popupRect.width - 8;
+    }
+    if (left < 8) left = 8;
+    if (top + popupRect.height > window.innerHeight - 8) {
+        top = rect.top - popupRect.height - 4;
+        if (top < 8) top = 8;
+    }
+
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+
+    // Stäng vid klick utanför
+    setTimeout(() => {
+        document.addEventListener("mousedown", onColorPickerOutsideClick, true);
+    }, 0);
 }
 
 // ---------- Kärnlogik ----------
@@ -224,6 +545,69 @@ function onMessageRendered(mesId) {
     colorizeElement(el);
 }
 
+// ---------- Skapa färgknapp (används både i WI-editor och settings-panel) ----------
+function createColorButton(currentColor, onSelect, onReset, opts = {}) {
+    const btn = document.createElement('div');
+    btn.className = 'wnc-color-trigger';
+    btn.style.cssText = `
+        width: ${opts.width || '28px'};
+        height: ${opts.height || '24px'};
+        border-radius: 4px;
+        background: ${currentColor};
+        border: 1px solid var(--SmartThemeBorderColor, #666);
+        cursor: pointer;
+        flex-shrink: 0;
+        position: relative;
+        transition: transform 0.1s;
+    `;
+
+    btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.1)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.transform = 'scale(1)'; });
+
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openColorPicker(btn, btn.style.backgroundColor.startsWith('rgb') 
+            ? rgbToHex(btn.style.backgroundColor) 
+            : btn.style.background || currentColor,
+        (newColor) => {
+            btn.style.background = newColor;
+            onSelect(newColor);
+        },
+        () => {
+            btn.style.background = settings.defaultColor;
+            onReset();
+        });
+    });
+
+    // Högerklicka = återställ
+    btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        btn.style.background = settings.defaultColor;
+        onReset();
+    });
+
+    // Long-press på mobil = återställ
+    let touchTimer = null;
+    btn.addEventListener('touchstart', () => {
+        touchTimer = setTimeout(() => {
+            btn.style.background = settings.defaultColor;
+            onReset();
+        }, 600);
+    });
+    btn.addEventListener('touchend', () => { clearTimeout(touchTimer); });
+    btn.addEventListener('touchmove', () => { clearTimeout(touchTimer); });
+
+    return btn;
+}
+
+function rgbToHex(rgb) {
+    const m = rgb.match(/\d+/g);
+    if (!m || m.length < 3) return '#ffffff';
+    return '#' + m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
+}
+
 // ---------- WI Editor: Injecta färgknappar ----------
 let wiEditorObserver = null;
 let wiPopupObserver = null;
@@ -236,117 +620,88 @@ function getCurrentEditorBookName() {
 }
 
 function getEntryUid(entryEl) {
-    // Försök flera sätt att hitta uid
     const uid = entryEl.getAttribute('uid');
     if (uid !== null) return uid;
-    
+
     const uidData = entryEl.dataset.uid;
     if (uidData !== undefined) return uidData;
-    
-    // Leta i närmaste world_entry-elements uid
+
     const parent = entryEl.closest('.world_entry[uid]') || entryEl.closest('[uid]');
     if (parent) return parent.getAttribute('uid');
-    
+
     return null;
 }
 
 function injectColorPickerIntoEntry(entryEl) {
-    if (!entryEl || entryEl.querySelector('.wnc-entry-color-btn')) return;
-    
+    if (!entryEl || entryEl.querySelector('.wnc-entry-color-wrapper')) return;
+
     const uid = getEntryUid(entryEl);
     if (uid === null || uid === undefined || uid === '') return;
-    
+
     const bookName = getCurrentEditorBookName();
     if (!bookName) return;
-    
+
     const entryId = `${bookName}::${uid}`;
     const currentColor = settings.entryColors[entryId] || settings.defaultColor;
-    
-    // Hitta rätt plats att injicera knappen
-    // Försök först .WIEnteryHeaderControls, sedan brevid entryStateSelector
-    let targetContainer = 
+
+    let targetContainer =
         entryEl.querySelector('.WIEnteryHeaderControls') ||
-        entryEl.querySelector('.WIEntryHeaderControls'); // ST har ibland stavat fel
-    
+        entryEl.querySelector('.WIEntryHeaderControls');
+
     if (!targetContainer) {
         const stateSelector = entryEl.querySelector('select[name="entryStateSelector"]');
         if (stateSelector?.parentElement) {
             targetContainer = stateSelector.parentElement;
         }
     }
-    
+
     if (!targetContainer) {
-        // Sista utväg: lägg bredvid comment-fältet
         const commentField = entryEl.querySelector('textarea[name="comment"]');
         if (commentField?.parentElement) {
             targetContainer = commentField.parentElement;
         }
     }
-    
+
     if (!targetContainer) return;
-    
-    // Skapa wrapper
+
     const wrapper = document.createElement('div');
     wrapper.className = 'wnc-entry-color-wrapper';
     wrapper.style.cssText = 'display:flex; align-items:center; gap:4px; margin-left:4px;';
-    
-    // Skapa etikett
+
     const label = document.createElement('span');
     label.textContent = '🎨';
-    label.title = 'Färg för namn i chatten (högerklicka = återställ)';
+    label.title = 'Färg för namn i chatten';
     label.style.cssText = 'font-size:0.9em; cursor:help;';
-    
-    // Skapa färgknapp
-    const colorInput = document.createElement('input');
-    colorInput.type = 'color';
-    colorInput.className = 'wnc-entry-color-btn';
-    colorInput.value = currentColor;
-    colorInput.title = 'Färg för namn i chatten (högerklicka = återställ)';
-    colorInput.style.cssText = `
-        width: 28px;
-        height: 24px;
-        padding: 0;
-        cursor: pointer;
-        border: 1px solid var(--SmartThemeBorderColor, #666);
-        border-radius: 4px;
-        background: transparent;
-        flex-shrink: 0;
-    `;
-    
-    // Uppdatera färg vid ändring
-    colorInput.addEventListener('input', () => {
-        settings.entryColors[entryId] = colorInput.value;
-        saveSettingsDebounced();
-        
-        // Auto-lägg till boken i bookNames om den inte finns
-        if (!settings.bookNames.includes(bookName)) {
-            settings.bookNames.push(bookName);
+
+    const colorBtn = createColorButton(currentColor,
+        (newColor) => {
+            settings.entryColors[entryId] = newColor;
             saveSettingsDebounced();
-            buildFromWorldInfo().then(() => {
+
+            if (!settings.bookNames.includes(bookName)) {
+                settings.bookNames.push(bookName);
+                saveSettingsDebounced();
+                buildFromWorldInfo().then(() => {
+                    colorizeAllVisible();
+                    updateBooksInputField();
+                });
+            } else {
                 colorizeAllVisible();
-                updateBooksInputField();
-            });
-        } else {
+            }
+        },
+        () => {
+            delete settings.entryColors[entryId];
+            saveSettingsDebounced();
             colorizeAllVisible();
         }
-    });
-    
-    // Högerklicka för att återställa
-    colorInput.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        delete settings.entryColors[entryId];
-        colorInput.value = settings.defaultColor;
-        saveSettingsDebounced();
-        colorizeAllVisible();
-    });
-    
+    );
+
     wrapper.appendChild(label);
-    wrapper.appendChild(colorInput);
+    wrapper.appendChild(colorBtn);
     targetContainer.appendChild(wrapper);
 }
 
 function scanAndInjectColorPickers() {
-    // Hitta alla entry-element i WI-editorn
     const entries = document.querySelectorAll('#world_popup_entries_list .world_entry');
     entries.forEach(injectColorPickerIntoEntry);
 }
@@ -354,27 +709,26 @@ function scanAndInjectColorPickers() {
 function setupWIEditorObserver() {
     const list = document.getElementById('world_popup_entries_list');
     if (!list) return false;
-    
+
     if (wiEditorObserver) wiEditorObserver.disconnect();
-    
+
     const debouncedScan = debounce(scanAndInjectColorPickers, 200);
-    
+
     wiEditorObserver = new MutationObserver(debouncedScan);
-    wiEditorObserver.observe(list, { 
-        childList: true, 
+    wiEditorObserver.observe(list, {
+        childList: true,
         subtree: true,
         attributes: true,
         attributeFilter: ['uid']
     });
-    
+
     scanAndInjectColorPickers();
     return true;
 }
 
 function setupWIPopupObserver() {
-    // Observera hela body för att upptäcka när WI-editorn öppnas
     if (wiPopupObserver) wiPopupObserver.disconnect();
-    
+
     wiPopupObserver = new MutationObserver(debounce(() => {
         const list = document.getElementById('world_popup_entries_list');
         if (list && list.children.length > 0) {
@@ -383,14 +737,13 @@ function setupWIPopupObserver() {
             }
         }
     }, 300));
-    
-    wiPopupObserver.observe(document.body, { 
-        childList: true, 
-        subtree: true 
+
+    wiPopupObserver.observe(document.body, {
+        childList: true,
+        subtree: true
     });
 }
 
-// Uppdatera bok-listan i inställningspanelen
 function updateBooksInputField() {
     const input = document.getElementById('wnc_books');
     if (input) {
@@ -419,14 +772,17 @@ function injectSettingsPanel() {
                 <label>World Info-böcker (kommaseparerat)</label>
                 <input type="text" id="wnc_books" class="text_pole" value="${settings.bookNames.join(", ")}">
 
-                <label>Default-färg</label>
-                <input type="color" id="wnc_default_color" value="${settings.defaultColor}">
+                <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
+                    <label style="flex:1;">Default-färg</label>
+                    <div id="wnc_default_color_holder"></div>
+                </div>
 
                 <button id="wnc_rebuild" class="menu_button" style="margin-top:8px;">Bygg om från World Info</button>
 
                 <div style="margin-top:8px; padding:6px; border-radius:6px; border:1px solid var(--SmartThemeBorderColor); font-size:0.85em; opacity:0.8;">
-                    💡 Färgknappar finns nu direkt i WI-editorn bredvid varje entry. 
-                    Högerklicka på en färgknapp för att återställa till Default.
+                    💡 Färgknappar finns direkt i WI-editorn bredvid varje entry.<br>
+                    Klicka på 🎨 för att öppna color pickern.<br>
+                    Högerklicka / long-press = återställ till Default.<br>
                     Böcker läggs till automatiskt när du sätter en färg.
                 </div>
             </div>
@@ -435,6 +791,34 @@ function injectSettingsPanel() {
 
     const target = document.querySelector("#extensions_settings2") || document.querySelector("#extensions_settings");
     if (target) target.appendChild(panel);
+
+    // Default color button
+    const defaultColorHolder = document.getElementById('wnc_default_color_holder');
+    const defaultColorBtn = createColorButton(settings.defaultColor,
+        (newColor) => {
+            settings.defaultColor = newColor;
+            saveSettingsDebounced();
+            for (const key of nameToColor.keys()) {
+                nameToColor.set(key, settings.defaultColor);
+            }
+            colorizeAllVisible();
+            // Uppdatera alla knappar i WI-editorn som inte har egen färg
+            document.querySelectorAll('.wnc-entry-color-wrapper').forEach(wrapper => {
+                const entryEl = wrapper.closest('.world_entry');
+                const uid = getEntryUid(entryEl);
+                const bookName = getCurrentEditorBookName();
+                if (uid && bookName) {
+                    const entryId = `${bookName}::${uid}`;
+                    if (!settings.entryColors[entryId]) {
+                        const btn = wrapper.querySelector('.wnc-color-trigger');
+                        if (btn) btn.style.background = settings.defaultColor;
+                    }
+                }
+            });
+        },
+        () => {} // ingen reset för default
+    );
+    defaultColorHolder.appendChild(defaultColorBtn);
 
     document.getElementById("wnc_enabled")?.addEventListener("change", (e) => {
         settings.enabled = e.target.checked;
@@ -452,27 +836,6 @@ function injectSettingsPanel() {
         settings.bookNames = e.target.value.split(",").map(s => s.trim()).filter(Boolean);
         saveSettingsDebounced();
         buildFromWorldInfo().then(colorizeAllVisible);
-    });
-
-    document.getElementById("wnc_default_color")?.addEventListener("change", (e) => {
-        settings.defaultColor = e.target.value;
-        saveSettingsDebounced();
-        for (const key of nameToColor.keys()) {
-            nameToColor.set(key, settings.defaultColor);
-        }
-        colorizeAllVisible();
-        // Uppdatera alla färgknappar i WI-editorn som inte har egen färg
-        document.querySelectorAll('.wnc-entry-color-btn').forEach(btn => {
-            const entryEl = btn.closest('.world_entry');
-            const uid = getEntryUid(entryEl);
-            const bookName = getCurrentEditorBookName();
-            if (uid && bookName) {
-                const entryId = `${bookName}::${uid}`;
-                if (!settings.entryColors[entryId]) {
-                    btn.value = settings.defaultColor;
-                }
-            }
-        });
     });
 
     document.getElementById("wnc_rebuild")?.addEventListener("click", async () => {
