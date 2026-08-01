@@ -144,26 +144,65 @@ const PRESET_COLORS = [
     "#ffaa44", "#ffee88", "#aaffaa", "#44ddaa",
     "#66ccff", "#aa88ff", "#ddaaff", "#ff88cc",
     "#ffffff", "#cccccc", "#888888", "#444444",
+    "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71",
+    "#1abc9c", "#3498db", "#9b59b6", "#e91e63",
 ];
 
 let activeColorPicker = null;
+let activeColorPickerWI = null;
 
 function closeColorPicker() {
     if (activeColorPicker) {
         activeColorPicker.remove();
         activeColorPicker = null;
+        activeColorPickerWI = null;
         document.removeEventListener("mousedown", onColorPickerOutsideClick, true);
     }
 }
 
 function onColorPickerOutsideClick(e) {
-    if (activeColorPicker && !activeColorPicker.contains(e.target) && !e.target.classList.contains('wnc-color-trigger')) {
+    if (!activeColorPicker) return;
+    const isInsidePicker = activeColorPicker.contains(e.target);
+    const isTrigger = e.target.classList && e.target.classList.contains('wnc-color-trigger');
+    const isInsideWI = activeColorPickerWI && activeColorPickerWI.contains(e.target);
+    if (!isInsidePicker && !isTrigger && !isInsideWI) {
         closeColorPicker();
     }
 }
 
+function findWIPopupContainer(el) {
+    const candidates = [
+        '#world_popup',
+        '#WorldInfo',
+        '#world_editor',
+        '#world_editor_popup',
+        '.world_info_popup',
+        '#dialogue_popup',
+        '.dialogue_popup',
+    ];
+    for (const sel of candidates) {
+        const found = el.closest(sel);
+        if (found) return found;
+    }
+    // Fallback: leta uppåt efter en stor popup-liknande container
+    let cur = el;
+    while (cur && cur !== document.body) {
+        if (cur.classList && (
+            (cur.id && cur.id.toLowerCase().includes('world')) ||
+            (cur.id && cur.id.toLowerCase().includes('popup')) ||
+            cur.classList.contains('popup')
+        )) {
+            const rect = cur.getBoundingClientRect();
+            if (rect.width > 300 && rect.height > 200) return cur;
+        }
+        cur = cur.parentElement;
+    }
+    return null;
+}
+
 function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
     closeColorPicker();
+
     const popup = document.createElement('div');
     popup.className = 'wnc-color-picker-popup';
     popup.style.cssText = `
@@ -175,6 +214,14 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         width: 240px; font-size: 13px;
         color: var(--SmartThemeBodyColor, #eee);
     `;
+
+    // ---- STOPPA propagation så WI-popupen inte stängs ----
+    const stopEvents = ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel', 'dblclick'];
+    stopEvents.forEach(evt => {
+        popup.addEventListener(evt, (e) => { e.stopPropagation(); }, true);
+        popup.addEventListener(evt, (e) => { e.stopPropagation(); }, false);
+    });
+
     // Palett
     const paletteSection = document.createElement('div');
     paletteSection.style.cssText = 'display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; margin-bottom: 10px;';
@@ -183,17 +230,20 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         swatch.style.cssText = `width: 100%; aspect-ratio: 1; background: ${color}; border-radius: 4px; cursor: pointer; border: 1px solid rgba(255,255,255,0.15); transition: transform 0.1s;`;
         swatch.addEventListener('mouseenter', () => swatch.style.transform = 'scale(1.15)');
         swatch.addEventListener('mouseleave', () => swatch.style.transform = 'scale(1)');
-        swatch.addEventListener('click', () => { onSelect(color); closeColorPicker(); });
+        swatch.addEventListener('click', (e) => { e.stopPropagation(); onSelect(color); closeColorPicker(); });
         paletteSection.appendChild(swatch);
     });
     popup.appendChild(paletteSection);
+
     const sep1 = document.createElement('hr');
     sep1.style.cssText = 'border: 0; border-top: 1px solid var(--SmartThemeBorderColor, #444); margin: 8px 0;';
     popup.appendChild(sep1);
+
     // HSL sliders
     let [h, s, l] = hexToHsl(currentColor);
     const sliderContainer = document.createElement('div');
     sliderContainer.style.cssText = 'display: flex; flex-direction: column; gap: 6px;';
+
     function makeSlider(label, max, getValue, onChange, gradient) {
         const row = document.createElement('div');
         row.style.cssText = 'display: flex; align-items: center; gap: 6px;';
@@ -206,42 +256,52 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         slider.min = '0'; slider.max = String(max);
         slider.value = String(getValue());
         slider.style.cssText = `flex: 1; height: 16px; -webkit-appearance: none; appearance: none; background: ${gradient}; border-radius: 8px; outline: none; cursor: pointer;`;
-        slider.addEventListener('input', () => {
+        slider.addEventListener('input', (e) => {
+            e.stopPropagation();
             onChange(parseInt(slider.value));
             const newColor = hslToHex(h, s, l);
             hexInput.value = newColor;
             preview.style.background = newColor;
         });
+        slider.addEventListener('mousedown', (e) => e.stopPropagation());
+        slider.addEventListener('touchstart', (e) => e.stopPropagation());
         row.appendChild(slider);
         return { row, slider };
     }
+
     const hueGradient = 'linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)';
     const hueSlider = makeSlider('H', 360, () => h, (v) => { h = v; updateSliders(); }, hueGradient);
     const satSlider = makeSlider('S', 100, () => s, (v) => { s = v; updateSliders(); }, `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`);
     const lightSlider = makeSlider('L', 100, () => l, (v) => { l = v; updateSliders(); }, `linear-gradient(to right, #000, hsl(${h},${s}%,50%), #fff)`);
+
     function updateSliders() {
         satSlider.slider.style.background = `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`;
         lightSlider.slider.style.background = `linear-gradient(to right, #000, hsl(${h},${s}%,50%), #fff)`;
     }
+
     sliderContainer.appendChild(hueSlider.row);
     sliderContainer.appendChild(satSlider.row);
     sliderContainer.appendChild(lightSlider.row);
     popup.appendChild(sliderContainer);
+
     const sep2 = document.createElement('hr');
     sep2.style.cssText = 'border: 0; border-top: 1px solid var(--SmartThemeBorderColor, #444); margin: 8px 0;';
     popup.appendChild(sep2);
+
     // Hex + preview
     const bottomRow = document.createElement('div');
     bottomRow.style.cssText = 'display: flex; align-items: center; gap: 6px;';
     const preview = document.createElement('div');
     preview.style.cssText = `width: 28px; height: 28px; border-radius: 4px; background: ${currentColor}; border: 1px solid rgba(255,255,255,0.2); flex-shrink: 0;`;
     bottomRow.appendChild(preview);
+
     const hexInput = document.createElement('input');
     hexInput.type = 'text';
     hexInput.value = currentColor;
     hexInput.maxLength = 7;
     hexInput.style.cssText = `flex: 1; background: var(--SmartThemeBlurTintColor, #222); color: var(--SmartThemeBodyColor, #eee); border: 1px solid var(--SmartThemeBorderColor, #555); border-radius: 4px; padding: 4px 6px; font-size: 12px; font-family: monospace; text-transform: lowercase; outline: none;`;
-    hexInput.addEventListener('input', () => {
+    hexInput.addEventListener('input', (e) => {
+        e.stopPropagation();
         let val = hexInput.value.trim();
         if (!val.startsWith('#')) val = '#' + val;
         if (isValidHex(val)) {
@@ -254,34 +314,46 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
         }
     });
     hexInput.addEventListener('keydown', (e) => {
+        e.stopPropagation();
         if (e.key === 'Enter') {
             let val = hexInput.value.trim();
             if (!val.startsWith('#')) val = '#' + val;
             if (isValidHex(val)) { onSelect(val); closeColorPicker(); }
         }
     });
+    hexInput.addEventListener('mousedown', (e) => e.stopPropagation());
     bottomRow.appendChild(hexInput);
+
     const confirmBtn = document.createElement('button');
     confirmBtn.textContent = '✓';
     confirmBtn.className = 'menu_button';
     confirmBtn.style.cssText = 'padding: 4px 10px; font-size: 14px; flex-shrink: 0;';
-    confirmBtn.addEventListener('click', () => {
+    confirmBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         let val = hexInput.value.trim();
         if (!val.startsWith('#')) val = '#' + val;
         if (isValidHex(val)) { onSelect(val); closeColorPicker(); }
     });
     bottomRow.appendChild(confirmBtn);
     popup.appendChild(bottomRow);
+
     if (onReset) {
         const resetBtn = document.createElement('button');
         resetBtn.textContent = '↺ Återställ till Default';
         resetBtn.className = 'menu_button';
         resetBtn.style.cssText = 'width: 100%; margin-top: 8px; font-size: 12px; padding: 4px;';
-        resetBtn.addEventListener('click', () => { onReset(); closeColorPicker(); });
+        resetBtn.addEventListener('click', (e) => { e.stopPropagation(); onReset(); closeColorPicker(); });
         popup.appendChild(resetBtn);
     }
-    document.body.appendChild(popup);
+
+    // ---- Placera popupen INUTI WI-popupen om möjligt ----
+    const wiPopup = findWIPopupContainer(anchorEl);
+    activeColorPickerWI = wiPopup;
+    const appendTarget = wiPopup || document.body;
+    appendTarget.appendChild(popup);
     activeColorPicker = popup;
+
+    // Positionera (fixed = relativt viewport oavsett förälder)
     const rect = anchorEl.getBoundingClientRect();
     const popupRect = popup.getBoundingClientRect();
     let left = rect.left;
@@ -294,6 +366,8 @@ function openColorPicker(anchorEl, currentColor, onSelect, onReset) {
     }
     popup.style.left = `${left}px`;
     popup.style.top = `${top}px`;
+
+    // Stäng vid klick utanför pickern OCH utanför WI-popupen
     setTimeout(() => document.addEventListener("mousedown", onColorPickerOutsideClick, true), 0);
 }
 
@@ -314,6 +388,7 @@ function createColorButton(currentColor, onSelect, onReset) {
         box-shadow: 0 1px 3px rgba(0,0,0,0.4);
         transition: transform 0.1s, box-shadow 0.1s;
     `;
+
     btn.addEventListener('mouseenter', () => {
         btn.style.transform = 'scale(1.15)';
         btn.style.boxShadow = '0 2px 6px rgba(0,0,0,0.6)';
@@ -322,6 +397,7 @@ function createColorButton(currentColor, onSelect, onReset) {
         btn.style.transform = 'scale(1)';
         btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.4)';
     });
+
     btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -340,6 +416,7 @@ function createColorButton(currentColor, onSelect, onReset) {
             }
         );
     });
+
     btn.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -347,6 +424,7 @@ function createColorButton(currentColor, onSelect, onReset) {
         btn.style.backgroundColor = settings.defaultColor;
         onReset();
     });
+
     let touchTimer = null;
     btn.addEventListener('touchstart', (e) => {
         touchTimer = setTimeout(() => {
@@ -358,6 +436,7 @@ function createColorButton(currentColor, onSelect, onReset) {
     });
     btn.addEventListener('touchend', () => clearTimeout(touchTimer));
     btn.addEventListener('touchmove', () => clearTimeout(touchTimer));
+
     return btn;
 }
 
@@ -477,20 +556,17 @@ let wiEditorObserver = null;
 let wiPopupObserver = null;
 
 function getCurrentEditorBookName() {
-    // Försök flera sätt att hitta boknamnet
     const select = document.getElementById('world_editor_select');
     if (select && select.selectedIndex >= 0) {
         const selected = select.options[select.selectedIndex];
         if (selected) return selected.text || selected.value;
     }
-    // Alternativ: leta efter en header/titel
     const header = document.querySelector('#world_popup_title') || document.querySelector('.world_info_editor_title');
     if (header) return header.textContent.trim();
     return null;
 }
 
 function getEntryUid(entryEl) {
-    // Försök flera sätt att hitta uid
     const uid = entryEl.getAttribute('uid');
     if (uid !== null && uid !== '') return uid;
     const uidData = entryEl.dataset?.uid;
@@ -500,7 +576,6 @@ function getEntryUid(entryEl) {
         const pUid = parent.getAttribute('uid');
         if (pUid !== null && pUid !== '') return pUid;
     }
-    // Leta efter dolt input-fält med uid
     const uidInput = entryEl.querySelector('input[name="uid"], [data-uid]');
     if (uidInput) {
         const val = uidInput.value || uidInput.dataset.uid;
@@ -510,10 +585,9 @@ function getEntryUid(entryEl) {
 }
 
 function findInjectionTarget(entryEl) {
-    // Försök flera möjliga containrar i prioritetsordning
     const selectors = [
-        '.WIEnteryHeaderControls',  // STs befintliga (med "typo")
-        '.WIEntryHeaderControls',   // om de fixat stavfelet
+        '.WIEnteryHeaderControls',
+        '.WIEntryHeaderControls',
         '.world_entry_header_controls',
         '.entry_header_controls',
     ];
@@ -521,28 +595,21 @@ function findInjectionTarget(entryEl) {
         const el = entryEl.querySelector(sel);
         if (el) return el;
     }
-    // Försök bredvid state selector
     const stateSelector = entryEl.querySelector('select[name="entryStateSelector"]');
     if (stateSelector?.parentElement) return stateSelector.parentElement;
-    // Försök bredvid comment/memo fältet
     const commentField = entryEl.querySelector('textarea[name="comment"]');
     if (commentField?.parentElement) return commentField.parentElement;
-    // Försök hitta första flex-container
     const flexContainer = entryEl.querySelector('.flex-container, .flex');
     if (flexContainer) return flexContainer;
-    // Sista utväg: entry-elementet själv
     return entryEl;
 }
 
 function injectColorPickerIntoEntry(entryEl) {
     if (!entryEl) return false;
-    // Hoppa över om redan injicerad
     if (entryEl.querySelector('.wnc-entry-color-wrapper')) return false;
 
     const uid = getEntryUid(entryEl);
-    if (uid === null || uid === undefined || uid === '') {
-        return false;
-    }
+    if (uid === null || uid === undefined || uid === '') return false;
 
     const bookName = getCurrentEditorBookName();
     if (!bookName) return false;
@@ -600,8 +667,6 @@ function injectColorPickerIntoEntry(entryEl) {
 }
 
 function scanAndInjectColorPickers() {
-    // Skanna ALLA world_entry-element i hela dokumentet
-    // (både i popup och i drawer)
     const allEntries = document.querySelectorAll('.world_entry');
     let injected = 0;
     allEntries.forEach(entry => {
@@ -613,7 +678,6 @@ function scanAndInjectColorPickers() {
 }
 
 function setupWIEditorObserver() {
-    // Hitta entries-listan – prova flera ID:n
     const list = document.getElementById('world_popup_entries_list')
         || document.getElementById('world_editor_entries')
         || document.querySelector('.world_info_entries_list')
@@ -636,18 +700,15 @@ function setupWIEditorObserver() {
 function setupWIPopupObserver() {
     if (wiPopupObserver) wiPopupObserver.disconnect();
     wiPopupObserver = new MutationObserver(debounce(() => {
-        // Kolla om WI-editorn är öppen
         const hasEntries = document.querySelector('.world_entry');
         const wiVisible = document.querySelector('#WorldInfo:not([style*="display: none"])')
             || document.querySelector('#world_popup[style*="display: flex"]')
             || document.querySelector('#world_popup:not([style*="display: none"])');
 
         if (hasEntries && wiVisible) {
-            // Försök sätta upp editor-observer om inte redan gjort
             if (!wiEditorObserver || !wiEditorObserver.isConnected) {
                 setupWIEditorObserver();
             }
-            // Skanna direkt också
             scanAndInjectColorPickers();
         }
     }, 300));
@@ -709,7 +770,6 @@ function injectSettingsPanel() {
                 nameToColor.set(key, settings.defaultColor);
             }
             colorizeAllVisible();
-            // Uppdatera alla WI-knappar utan egen färg
             document.querySelectorAll('.wnc-entry-color-wrapper').forEach(wrapper => {
                 const entryEl = wrapper.closest('.world_entry');
                 const uid = getEntryUid(entryEl);
@@ -802,7 +862,7 @@ buildFromWorldInfo().then(() => {
     scanAndInjectColorPickers();
 });
 
-// Skanna periodiskt som back-up (var 2:e sekund i 30 sekunder efter start)
+// Backup-skanning: var 2:e sekund i 30 sekunder efter start
 let backupScanCount = 0;
 const backupScanInterval = setInterval(() => {
     scanAndInjectColorPickers();
